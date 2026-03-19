@@ -13,6 +13,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.event import filter as event_filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
+from astrbot.core.star.filter.command import GreedyStr
 
 from . import arxiv_client, formatter, llm_service, pdf_handler
 from .history import SentHistory
@@ -314,19 +315,17 @@ class ArxivPlugin(Star):
         """ArXiv 论文相关指令组。"""
 
     @arxiv_group.command("search")
-    async def cmd_search(self, event: AstrMessageEvent):
+    async def cmd_search(
+        self, event: AstrMessageEvent, query: GreedyStr = GreedyStr("")
+    ):
         """搜索 arXiv 论文。用法: /arxiv search <关键词>"""
-        query = event.message_str.strip()
-        for prefix in ["/arxiv search ", "arxiv search "]:
-            if query.lower().startswith(prefix):
-                query = query[len(prefix) :].strip()
-                break
-
-        if not query:
+        if not query.strip():
             yield event.plain_result(
                 "❌ 请提供搜索关键词。用法: /arxiv search <关键词>"
             )
             return
+
+        query = query.strip()
 
         max_results = self._arxiv_cfg.get("max_results", 5)
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
