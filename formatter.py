@@ -143,9 +143,7 @@ def build_forward_nodes(
 
     # 头部节点
     header_chain = MessageChain()
-    header_chain.chain.append(
-        Plain(f"📚 ArXiv 论文推送 ({len(papers_chains)} 篇)")
-    )
+    header_chain.chain.append(Plain(f"📚 ArXiv 论文推送 ({len(papers_chains)} 篇)"))
     nodes.append(Node(content=header_chain.chain, name=bot_name, uin=bot_uin))
 
     # 每篇论文一个节点

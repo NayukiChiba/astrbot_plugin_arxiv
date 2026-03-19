@@ -38,97 +38,135 @@ def _init_config(plugin_name: str) -> None:
     from astrbot.core.star.config import put_config
 
     put_config(
-        plugin_name, "学科分类", "categories",
+        plugin_name,
+        "学科分类",
+        "categories",
         ["cs.AI"],
         "arXiv 学科分类代码列表，例如 cs.AI, cs.LG, math.CO",
     )
     put_config(
-        plugin_name, "关键词标签", "tags",
+        plugin_name,
+        "关键词标签",
+        "tags",
         [],
         "额外的关键词标签，用于模糊匹配（留空则仅按分类筛选）",
     )
     put_config(
-        plugin_name, "每次推送数量", "max_results",
+        plugin_name,
+        "每次推送数量",
+        "max_results",
         5,
         "每次推送或搜索的最大论文数量",
     )
     put_config(
-        plugin_name, "定时表达式", "cron_expression",
+        plugin_name,
+        "定时表达式",
+        "cron_expression",
         "0 9 * * *",
         "Cron 定时表达式（默认每天早上 9 点）",
     )
     put_config(
-        plugin_name, "时区", "cron_timezone",
+        plugin_name,
+        "时区",
+        "cron_timezone",
         "Asia/Shanghai",
         "定时任务时区",
     )
     put_config(
-        plugin_name, "目标会话列表", "target_sessions",
+        plugin_name,
+        "目标会话列表",
+        "target_sessions",
         [],
         "自动推送的目标 UMO 会话列表（从消息事件中获取 unified_msg_origin）",
     )
     put_config(
-        plugin_name, "发送模式", "send_mode",
+        plugin_name,
+        "发送模式",
+        "send_mode",
         "forward",
         "发送方式: forward (合并转发) 或 individual (逐条发送)",
     )
     put_config(
-        plugin_name, "附带 PDF", "attach_pdf",
+        plugin_name,
+        "附带 PDF",
+        "attach_pdf",
         False,
         "是否附带 PDF 文件",
     )
     put_config(
-        plugin_name, "截图 PDF 首页", "screenshot_pdf",
+        plugin_name,
+        "截图 PDF 首页",
+        "screenshot_pdf",
         True,
         "是否截取 PDF 第一页作为图片发送",
     )
     put_config(
-        plugin_name, "截图 DPI", "screenshot_dpi",
+        plugin_name,
+        "截图 DPI",
+        "screenshot_dpi",
         150,
         "PDF 首页截图的渲染精度（DPI），建议 72~300",
     )
     put_config(
-        plugin_name, "PDF 最大体积 (MB)", "max_pdf_size_mb",
+        plugin_name,
+        "PDF 最大体积 (MB)",
+        "max_pdf_size_mb",
         20,
         "允许处理的 PDF 最大文件大小（MB）",
     )
     put_config(
-        plugin_name, "超时时间 (秒)", "timeout_seconds",
+        plugin_name,
+        "超时时间 (秒)",
+        "timeout_seconds",
         30,
         "HTTP 请求超时时间（秒）",
     )
     put_config(
-        plugin_name, "发送摘要", "send_abstract",
+        plugin_name,
+        "发送摘要",
+        "send_abstract",
         True,
         "是否在消息中包含论文摘要",
     )
     put_config(
-        plugin_name, "摘要模式", "abstract_mode",
+        plugin_name,
+        "摘要模式",
+        "abstract_mode",
         "original",
         "摘要处理方式: original (原文) 或 llm_chinese (LLM 翻译为中文)",
     )
     put_config(
-        plugin_name, "LLM 总结论文", "llm_summarize",
+        plugin_name,
+        "LLM 总结论文",
+        "llm_summarize",
         False,
         "是否使用 LLM 扫描 PDF 并生成论文总结",
     )
     put_config(
-        plugin_name, "LLM 提供商 ID", "llm_provider_id",
+        plugin_name,
+        "LLM 提供商 ID",
+        "llm_provider_id",
         "",
         "用于 LLM 功能的提供商 ID（留空则使用默认提供商）",
     )
     put_config(
-        plugin_name, "LLM 总结 Prompt", "llm_summary_prompt",
+        plugin_name,
+        "LLM 总结 Prompt",
+        "llm_summary_prompt",
         "",
         "自定义 LLM 总结 prompt，需包含 {content} 占位符（留空使用默认）",
     )
     put_config(
-        plugin_name, "机器人名称", "bot_name",
+        plugin_name,
+        "机器人名称",
+        "bot_name",
         "ArXiv Bot",
         "合并转发消息中显示的机器人昵称",
     )
     put_config(
-        plugin_name, "历史保留天数", "history_retention_days",
+        plugin_name,
+        "历史保留天数",
+        "history_retention_days",
         30,
         "已发送论文记录的保留天数（用于去重）",
     )
@@ -205,7 +243,9 @@ class ArxivPlugin(Star):
             )
             self._cron_job_id = job.job_id
             logger.info(
-                "ArXiv 定时推送已注册: %s (%s)", cron_expr, timezone,
+                "ArXiv 定时推送已注册: %s (%s)",
+                cron_expr,
+                timezone,
             )
         except Exception:
             logger.exception("注册 ArXiv 定时任务失败。")
@@ -242,7 +282,9 @@ class ArxivPlugin(Star):
             await self._send_papers_to_session(session, papers)
 
     async def _send_papers_to_session(
-        self, session: str, papers: list[arxiv_client.ArxivPaper],
+        self,
+        session: str,
+        papers: list[arxiv_client.ArxivPaper],
     ) -> None:
         """向指定会话发送论文（去重后）。"""
         if not self._history:
@@ -250,8 +292,7 @@ class ArxivPlugin(Star):
 
         # 过滤已发送的论文
         unsent_papers = [
-            p for p in papers
-            if not self._history.is_sent(session, p.arxiv_id)
+            p for p in papers if not self._history.is_sent(session, p.arxiv_id)
         ]
 
         if not unsent_papers:
@@ -270,7 +311,8 @@ class ArxivPlugin(Star):
             if send_mode == "forward":
                 bot_name = self._config.get("bot_name", "ArXiv Bot")
                 msg = formatter.build_forward_nodes(
-                    chains, bot_name=bot_name,
+                    chains,
+                    bot_name=bot_name,
                 )
                 await self.context.send_message(session, msg)
             else:
@@ -283,15 +325,18 @@ class ArxivPlugin(Star):
 
         # 标记为已发送
         self._history.mark_sent_batch(
-            session, [p.arxiv_id for p in unsent_papers],
+            session,
+            [p.arxiv_id for p in unsent_papers],
         )
         logger.info(
             "ArXiv 推送至 %s：成功发送 %d 篇论文。",
-            session, len(unsent_papers),
+            session,
+            len(unsent_papers),
         )
 
     async def _process_papers(
-        self, papers: list[arxiv_client.ArxivPaper],
+        self,
+        papers: list[arxiv_client.ArxivPaper],
     ) -> list[MessageChain]:
         """处理论文列表，生成消息链。"""
         chains: list[MessageChain] = []
@@ -326,7 +371,9 @@ class ArxivPlugin(Star):
             if abstract_mode == "llm_chinese" and paper.abstract:
                 provider_id = self._config.get("llm_provider_id", "")
                 abstract_text = await llm_service.translate_abstract(
-                    self.context, paper.abstract, provider_id=provider_id,
+                    self.context,
+                    paper.abstract,
+                    provider_id=provider_id,
                 )
             else:
                 abstract_text = paper.abstract
@@ -351,7 +398,9 @@ class ArxivPlugin(Star):
         if downloaded_pdf and self._config.get("screenshot_pdf", True):
             dpi = self._config.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
-                downloaded_pdf, self._temp_dir, dpi=dpi,
+                downloaded_pdf,
+                self._temp_dir,
+                dpi=dpi,
             )
             if screenshot:
                 screenshot_path = str(screenshot)
@@ -361,9 +410,13 @@ class ArxivPlugin(Star):
             pdf_text = pdf_handler.extract_text(downloaded_pdf)
             if pdf_text:
                 provider_id = self._config.get("llm_provider_id", "")
-                custom_prompt = self._config.get(
-                    "llm_summary_prompt", "",
-                ) or _DEFAULT_SUMMARY_PROMPT
+                custom_prompt = (
+                    self._config.get(
+                        "llm_summary_prompt",
+                        "",
+                    )
+                    or _DEFAULT_SUMMARY_PROMPT
+                )
                 summary_text = await llm_service.summarize_paper(
                     self.context,
                     pdf_text,
@@ -399,11 +452,13 @@ class ArxivPlugin(Star):
         # 移除指令前缀
         for prefix in ["/arxiv search ", "arxiv search "]:
             if query.lower().startswith(prefix):
-                query = query[len(prefix):].strip()
+                query = query[len(prefix) :].strip()
                 break
 
         if not query:
-            yield event.plain_result("❌ 请提供搜索关键词。用法: /arxiv search <关键词>")
+            yield event.plain_result(
+                "❌ 请提供搜索关键词。用法: /arxiv search <关键词>"
+            )
             return
 
         self._load_config()
@@ -412,7 +467,9 @@ class ArxivPlugin(Star):
 
         try:
             papers = await arxiv_client.search_papers(
-                query, max_results=max_results, timeout=timeout,
+                query,
+                max_results=max_results,
+                timeout=timeout,
             )
         except Exception:
             logger.exception("ArXiv 搜索失败。")
@@ -530,6 +587,7 @@ class ArxivPlugin(Star):
 
         targets.append(umo)
         from astrbot.core.star.config import update_config
+
         update_config(PLUGIN_NAME, "target_sessions", targets)
         self._config["target_sessions"] = targets
 
@@ -548,6 +606,7 @@ class ArxivPlugin(Star):
 
         targets.remove(umo)
         from astrbot.core.star.config import update_config
+
         update_config(PLUGIN_NAME, "target_sessions", targets)
         self._config["target_sessions"] = targets
 
@@ -584,10 +643,7 @@ class ArxivPlugin(Star):
 
         # 过滤已发送
         if self._history:
-            papers = [
-                p for p in papers
-                if not self._history.is_sent(umo, p.arxiv_id)
-            ]
+            papers = [p for p in papers if not self._history.is_sent(umo, p.arxiv_id)]
 
         if not papers:
             yield event.plain_result("📭 当前没有新的论文可推送（均已发送过）。")
@@ -610,7 +666,8 @@ class ArxivPlugin(Star):
         # 标记已发送
         if self._history:
             self._history.mark_sent_batch(
-                umo, [p.arxiv_id for p in papers],
+                umo,
+                [p.arxiv_id for p in papers],
             )
 
     async def terminate(self) -> None:
@@ -625,6 +682,7 @@ class ArxivPlugin(Star):
         # 清理临时文件
         if self._temp_dir.exists():
             import shutil
+
             try:
                 shutil.rmtree(self._temp_dir, ignore_errors=True)
             except Exception:

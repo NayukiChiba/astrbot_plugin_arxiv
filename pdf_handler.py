@@ -20,9 +20,7 @@ try:
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
-    logger.info(
-        "pymupdf 未安装，PDF 截图和文本提取功能将被禁用。"
-    )
+    logger.info("pymupdf 未安装，PDF 截图和文本提取功能将被禁用。")
 
 
 async def download_pdf(

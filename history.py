@@ -68,11 +68,7 @@ class SentHistory:
         cutoff = time.time() - self._retention_days * 86400
         removed = 0
         for session in list(self._data.keys()):
-            old_ids = [
-                pid
-                for pid, ts in self._data[session].items()
-                if ts < cutoff
-            ]
+            old_ids = [pid for pid, ts in self._data[session].items() if ts < cutoff]
             for pid in old_ids:
                 del self._data[session][pid]
                 removed += 1
