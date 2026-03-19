@@ -1,7 +1,6 @@
-"""ArXiv API async client.
+"""arXiv API 异步客户端。
 
-Provides search and latest-paper fetching via the arXiv Atom API using
-aiohttp + feedparser.
+通过 aiohttp + feedparser 实现论文搜索和最新论文获取。
 """
 
 from __future__ import annotations
@@ -15,52 +14,52 @@ import feedparser
 
 ARXIV_API_URL = "http://export.arxiv.org/api/query"
 
-# Courtesy delay between API calls (arXiv policy).
+# arXiv API 请求间隔（遵守官方礼貌策略）
 _API_DELAY_SECONDS = 3.0
 
-# Common arXiv categories with human-readable labels.
+# 常见 arXiv 学科分类及其中文说明
 ARXIV_CATEGORIES: dict[str, str] = {
-    # Computer Science
-    "cs.AI": "Artificial Intelligence",
-    "cs.CL": "Computation and Language (NLP)",
-    "cs.CV": "Computer Vision",
-    "cs.LG": "Machine Learning",
-    "cs.CR": "Cryptography and Security",
-    "cs.DB": "Databases",
-    "cs.DS": "Data Structures and Algorithms",
-    "cs.IR": "Information Retrieval",
-    "cs.NE": "Neural and Evolutionary Computing",
-    "cs.RO": "Robotics",
-    "cs.SE": "Software Engineering",
-    "cs.SI": "Social and Information Networks",
-    # Electrical Engineering / Systems
-    "eess.AS": "Audio and Speech Processing",
-    "eess.IV": "Image and Video Processing",
-    "eess.SP": "Signal Processing",
-    # Mathematics
-    "math.CO": "Combinatorics",
-    "math.OC": "Optimization and Control",
-    "math.PR": "Probability",
-    "math.ST": "Statistics Theory",
-    # Statistics
-    "stat.ML": "Machine Learning (Statistics)",
-    "stat.ME": "Methodology",
-    # Physics
-    "physics.comp-ph": "Computational Physics",
-    "quant-ph": "Quantum Physics",
-    "hep-th": "High Energy Physics - Theory",
-    "cond-mat.stat-mech": "Statistical Mechanics",
-    # Quantitative Biology
-    "q-bio.BM": "Biomolecules",
-    "q-bio.GN": "Genomics",
-    # Quantitative Finance
-    "q-fin.ST": "Statistical Finance",
+    # 计算机科学
+    "cs.AI": "人工智能",
+    "cs.CL": "计算语言学 (NLP)",
+    "cs.CV": "计算机视觉",
+    "cs.LG": "机器学习",
+    "cs.CR": "密码学与安全",
+    "cs.DB": "数据库",
+    "cs.DS": "数据结构与算法",
+    "cs.IR": "信息检索",
+    "cs.NE": "神经与进化计算",
+    "cs.RO": "机器人学",
+    "cs.SE": "软件工程",
+    "cs.SI": "社交与信息网络",
+    # 电气工程与系统
+    "eess.AS": "音频与语音处理",
+    "eess.IV": "图像与视频处理",
+    "eess.SP": "信号处理",
+    # 数学
+    "math.CO": "组合数学",
+    "math.OC": "优化与控制",
+    "math.PR": "概率论",
+    "math.ST": "统计理论",
+    # 统计学
+    "stat.ML": "机器学习 (统计)",
+    "stat.ME": "方法论",
+    # 物理学
+    "physics.comp-ph": "计算物理",
+    "quant-ph": "量子物理",
+    "hep-th": "高能物理 - 理论",
+    "cond-mat.stat-mech": "统计力学",
+    # 定量生物学
+    "q-bio.BM": "生物分子",
+    "q-bio.GN": "基因组学",
+    # 定量金融
+    "q-fin.ST": "统计金融",
 }
 
 
 @dataclass
 class ArxivPaper:
-    """Represents a single arXiv paper."""
+    """表示一篇 arXiv 论文。"""
 
     arxiv_id: str = ""
     title: str = ""
@@ -74,7 +73,7 @@ class ArxivPaper:
 
     @property
     def published_date(self) -> str:
-        """Return a human-readable published date string."""
+        """返回可读的发布日期字符串。"""
         try:
             dt = datetime.fromisoformat(self.published.replace("Z", "+00:00"))
             return dt.strftime("%Y-%m-%d")
@@ -88,10 +87,9 @@ def _build_search_query(
     categories: list[str] | None = None,
     tags: list[str] | None = None,
 ) -> str:
-    """Build an arXiv API search query string.
+    """构建 arXiv API 搜索查询字符串。
 
-    Combines free-text query, category filters, and keyword tags into a single
-    query string accepted by the arXiv API.
+    将自由文本查询、分类过滤和关键词标签组合为一个 arXiv API 接受的查询字符串。
     """
     parts: list[str] = []
 
@@ -116,13 +114,13 @@ def _build_search_query(
 
 
 def _parse_feed_entry(entry: dict) -> ArxivPaper:
-    """Parse a single feedparser entry into an ArxivPaper."""
-    # Extract arXiv ID from the entry id URL
+    """将单条 feedparser 条目解析为 ArxivPaper 对象。"""
+    # 从条目 ID URL 中提取 arXiv ID
     arxiv_id = entry.get("id", "")
     if "/abs/" in arxiv_id:
         arxiv_id = arxiv_id.split("/abs/")[-1]
 
-    # Extract PDF link
+    # 提取 PDF 链接
     pdf_url = ""
     for link in entry.get("links", []):
         if link.get("type") == "application/pdf":
@@ -131,10 +129,10 @@ def _parse_feed_entry(entry: dict) -> ArxivPaper:
     if not pdf_url and arxiv_id:
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
 
-    # Extract authors
+    # 提取作者列表
     authors = [a.get("name", "") for a in entry.get("authors", [])]
 
-    # Extract categories
+    # 提取分类标签
     categories = [t.get("term", "") for t in entry.get("tags", [])]
 
     return ArxivPaper(
@@ -156,15 +154,15 @@ async def search_papers(
     max_results: int = 5,
     timeout: int = 30,
 ) -> list[ArxivPaper]:
-    """Search arXiv by free-text query.
+    """按关键词搜索 arXiv 论文。
 
     Args:
-        query: Search keywords.
-        max_results: Maximum number of results to return.
-        timeout: HTTP request timeout in seconds.
+        query: 搜索关键词。
+        max_results: 最大返回结果数。
+        timeout: HTTP 请求超时秒数。
 
     Returns:
-        List of ArxivPaper objects.
+        ArxivPaper 对象列表。
     """
     search_query = _build_search_query(query=query)
     return await _fetch_papers(
@@ -182,16 +180,16 @@ async def get_latest_papers(
     max_results: int = 5,
     timeout: int = 30,
 ) -> list[ArxivPaper]:
-    """Fetch the latest papers matching categories and/or tags.
+    """获取匹配分类和标签的最新论文。
 
     Args:
-        categories: ArXiv category codes, e.g. ["cs.AI", "cs.LG"].
-        tags: Additional keyword tags for fuzzy matching.
-        max_results: Maximum number of results.
-        timeout: HTTP request timeout in seconds.
+        categories: arXiv 分类代码列表，如 ["cs.AI", "cs.LG"]。
+        tags: 额外的关键词标签，用于模糊匹配。
+        max_results: 最大返回结果数。
+        timeout: HTTP 请求超时秒数。
 
     Returns:
-        List of ArxivPaper objects, sorted by submission date descending.
+        按提交日期降序排列的 ArxivPaper 对象列表。
     """
     search_query = _build_search_query(categories=categories, tags=tags)
     return await _fetch_papers(
@@ -209,7 +207,7 @@ async def _fetch_papers(
     sort_by: str,
     timeout: int,
 ) -> list[ArxivPaper]:
-    """Low-level fetch from the arXiv API."""
+    """底层 arXiv API 请求方法。"""
     params = {
         "search_query": search_query,
         "start": 0,
@@ -227,7 +225,7 @@ async def _fetch_papers(
             resp.raise_for_status()
             text = await resp.text()
 
-    # Courtesy delay for arXiv API
+    # 遵守 arXiv API 礼貌延迟
     await asyncio.sleep(_API_DELAY_SECONDS)
 
     feed = feedparser.parse(text)

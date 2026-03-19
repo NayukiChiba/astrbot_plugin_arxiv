@@ -1,8 +1,7 @@
-"""PDF download, size validation, text extraction, and first-page screenshot.
+"""PDF 下载、体积校验、文本提取和首页截图模块。
 
-Uses aiohttp for async downloading and pymupdf (fitz) for PDF processing.
-PyMuPDF is treated as a soft dependency — features degrade gracefully if
-unavailable.
+使用 aiohttp 进行异步下载，pymupdf (fitz) 进行 PDF 处理。
+PyMuPDF 为软依赖 —— 若未安装则相关功能优雅降级。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import aiohttp
 
 logger = logging.getLogger("astrbot")
 
-# Try to import pymupdf; mark as unavailable if missing.
+# 尝试导入 pymupdf，未安装则标记为不可用
 try:
     import fitz  # pymupdf
 
@@ -22,8 +21,7 @@ try:
 except ImportError:
     PYMUPDF_AVAILABLE = False
     logger.info(
-        "pymupdf is not installed. PDF screenshot and text extraction "
-        "features will be disabled."
+        "pymupdf 未安装，PDF 截图和文本提取功能将被禁用。"
     )
 
 
@@ -34,22 +32,21 @@ async def download_pdf(
     timeout: int = 30,
     max_size_mb: int = 20,
 ) -> Path | None:
-    """Download a PDF file with size validation.
+    """下载 PDF 文件，支持体积限制。
 
     Args:
-        url: PDF download URL.
-        save_dir: Directory to save the file.
-        timeout: HTTP timeout in seconds.
-        max_size_mb: Maximum allowed file size in megabytes.
+        url: PDF 下载链接。
+        save_dir: 保存目录。
+        timeout: HTTP 超时秒数。
+        max_size_mb: 最大允许文件大小（MB）。
 
     Returns:
-        Path to the downloaded file, or None if download failed or
-        exceeded size limit.
+        下载成功返回文件路径，失败或超出大小限制返回 None。
     """
     max_bytes = max_size_mb * 1024 * 1024
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Derive filename from URL
+    # 从 URL 推导文件名
     filename = url.rstrip("/").split("/")[-1]
     if not filename.endswith(".pdf"):
         filename += ".pdf"
@@ -63,25 +60,25 @@ async def download_pdf(
             ) as resp:
                 resp.raise_for_status()
 
-                # Check Content-Length header first
+                # 优先检查 Content-Length 头
                 content_length = resp.headers.get("Content-Length")
                 if content_length and int(content_length) > max_bytes:
                     logger.warning(
-                        "PDF %s exceeds size limit: %s bytes > %s bytes",
+                        "PDF %s 超出大小限制: %s 字节 > %s 字节",
                         url,
                         content_length,
                         max_bytes,
                     )
                     return None
 
-                # Stream download with size check
+                # 流式下载，实时校验大小
                 downloaded = 0
                 with open(save_path, "wb") as f:
                     async for chunk in resp.content.iter_chunked(8192):
                         downloaded += len(chunk)
                         if downloaded > max_bytes:
                             logger.warning(
-                                "PDF %s exceeded size limit during download.",
+                                "PDF %s 在下载过程中超出大小限制。",
                                 url,
                             )
                             f.close()
@@ -92,7 +89,7 @@ async def download_pdf(
         return save_path
 
     except Exception:
-        logger.exception("Failed to download PDF from %s", url)
+        logger.exception("从 %s 下载 PDF 失败", url)
         save_path.unlink(missing_ok=True)
         return None
 
@@ -103,16 +100,15 @@ def screenshot_first_page(
     *,
     dpi: int = 150,
 ) -> Path | None:
-    """Render the first page of a PDF as a PNG image.
+    """将 PDF 第一页渲染为 PNG 图片。
 
     Args:
-        pdf_path: Path to the PDF file.
-        output_dir: Directory to save the screenshot.
-        dpi: Rendering resolution in dots per inch.
+        pdf_path: PDF 文件路径。
+        output_dir: 截图保存目录。
+        dpi: 渲染分辨率（每英寸点数），建议 72~300。
 
     Returns:
-        Path to the screenshot PNG, or None if pymupdf is unavailable
-        or rendering failed.
+        截图文件路径，pymupdf 不可用或渲染失败返回 None。
     """
     if not PYMUPDF_AVAILABLE:
         return None
@@ -136,20 +132,19 @@ def screenshot_first_page(
         return output_path
 
     except Exception:
-        logger.exception("Failed to screenshot PDF first page: %s", pdf_path)
+        logger.exception("PDF 首页截图失败: %s", pdf_path)
         return None
 
 
 def extract_text(pdf_path: Path, max_pages: int = 10) -> str:
-    """Extract text content from a PDF file.
+    """从 PDF 文件中提取文本内容。
 
     Args:
-        pdf_path: Path to the PDF file.
-        max_pages: Maximum number of pages to extract text from.
+        pdf_path: PDF 文件路径。
+        max_pages: 最大提取页数。
 
     Returns:
-        Extracted text string, or empty string if pymupdf is
-        unavailable or extraction failed.
+        提取的文本字符串，pymupdf 不可用或提取失败返回空字符串。
     """
     if not PYMUPDF_AVAILABLE:
         return ""
@@ -165,5 +160,5 @@ def extract_text(pdf_path: Path, max_pages: int = 10) -> str:
         return "\n".join(texts)
 
     except Exception:
-        logger.exception("Failed to extract text from PDF: %s", pdf_path)
+        logger.exception("从 PDF 提取文本失败: %s", pdf_path)
         return ""
