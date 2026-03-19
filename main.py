@@ -160,7 +160,7 @@ class ArxivPlugin(Star):
         session: str,
         papers: list[arxiv_client.ArxivPaper],
     ) -> None:
-        """向指定会话发送论文（去重后）。"""
+        """向指定会话发送论文（定时推送，自动去重）。"""
         if not self._history:
             return
 
@@ -501,9 +501,7 @@ class ArxivPlugin(Star):
 
     @arxiv_group.command("push_now")
     async def cmd_push_now(self, event: AstrMessageEvent):
-        """立即推送最新论文到当前会话（去重）。用法: /arxiv push_now"""
-        umo = event.unified_msg_origin
-
+        """立即推送最新论文到当前会话。用法: /arxiv push_now"""
         categories = self._arxiv_cfg.get("categories", ["cs.AI"])
         tags = self._arxiv_cfg.get("tags", [])
         max_results = self._arxiv_cfg.get("max_results", 5)
@@ -527,14 +525,6 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 当前分类下没有找到论文。")
             return
 
-        # 过滤已发送
-        if self._history:
-            papers = [p for p in papers if not self._history.is_sent(umo, p.arxiv_id)]
-
-        if not papers:
-            yield event.plain_result("📭 当前没有新的论文可推送（均已发送过）。")
-            return
-
         chains = await self._process_papers(papers)
         if not chains:
             yield event.plain_result("📭 处理论文时出错。")
@@ -552,13 +542,6 @@ class ArxivPlugin(Star):
                 mer = MessageEventResult()
                 mer.chain = chain.chain
                 yield mer
-
-        # 标记已发送
-        if self._history:
-            self._history.mark_sent_batch(
-                umo,
-                [p.arxiv_id for p in papers],
-            )
 
     async def terminate(self) -> None:
         """插件卸载时清理定时任务和临时文件。"""
