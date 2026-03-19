@@ -354,10 +354,10 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.result_message(msg)
+            yield event.chain_result(msg.chain)
         else:
             for chain in chains:
-                yield event.result_message(chain)
+                yield event.chain_result(chain.chain)
 
     @arxiv_group.command("latest")
     async def cmd_latest(self, event: AstrMessageEvent):
@@ -392,16 +392,16 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.result_message(msg)
+            yield event.chain_result(msg.chain)
         else:
             for chain in chains:
-                yield event.result_message(chain)
+                yield event.chain_result(chain.chain)
 
     @arxiv_group.command("categories")
     async def cmd_categories(self, event: AstrMessageEvent):
         """列出所有支持的 arXiv 学科分类。"""
         msg = formatter.build_categories_chain()
-        yield event.result_message(msg)
+        yield event.chain_result(msg.chain)
 
     @arxiv_group.command("status")
     async def cmd_status(self, event: AstrMessageEvent):
@@ -516,10 +516,10 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.result_message(msg)
+            yield event.chain_result(msg.chain)
         else:
             for chain in chains:
-                yield event.result_message(chain)
+                yield event.chain_result(chain.chain)
 
         # 标记已发送
         if self._history:
