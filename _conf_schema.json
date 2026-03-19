@@ -67,7 +67,7 @@
       "attach_pdf": {
         "description": "附带 PDF 文件",
         "type": "bool",
-        "default": false
+        "default": true
       },
       "screenshot_pdf": {
         "description": "截图 PDF 首页",
@@ -112,10 +112,10 @@
         "default": false
       },
       "llm_provider_id": {
-        "description": "LLM 提供商",
+        "description": "LLM 提供商（留空则使用当前对话的默认 LLM）",
         "type": "string",
         "_special": "select_provider",
-        "hint": "用于摘要翻译和论文总结的 LLM 提供商。",
+        "hint": "用于摘要翻译和论文总结的 LLM 提供商。留空将自动使用当前对话的默认 LLM 提供商。",
         "default": ""
       },
       "llm_summary_prompt": {
