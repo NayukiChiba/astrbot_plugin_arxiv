@@ -12,6 +12,7 @@ from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.event import filter as event_filter
 from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.core.message.message_event_result import MessageEventResult
 
 from . import arxiv_client, formatter, llm_service, pdf_handler
 from .history import SentHistory
@@ -354,10 +355,14 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.chain_result(msg.chain)
+            mer = MessageEventResult()
+            mer.chain = msg.chain
+            yield mer
         else:
             for chain in chains:
-                yield event.chain_result(chain.chain)
+                mer = MessageEventResult()
+                mer.chain = chain.chain
+                yield mer
 
     @arxiv_group.command("latest")
     async def cmd_latest(self, event: AstrMessageEvent):
@@ -392,16 +397,22 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.chain_result(msg.chain)
+            mer = MessageEventResult()
+            mer.chain = msg.chain
+            yield mer
         else:
             for chain in chains:
-                yield event.chain_result(chain.chain)
+                mer = MessageEventResult()
+                mer.chain = chain.chain
+                yield mer
 
     @arxiv_group.command("categories")
     async def cmd_categories(self, event: AstrMessageEvent):
         """列出所有支持的 arXiv 学科分类。"""
         msg = formatter.build_categories_chain()
-        yield event.chain_result(msg.chain)
+        mer = MessageEventResult()
+        mer.chain = msg.chain
+        yield mer
 
     @arxiv_group.command("status")
     async def cmd_status(self, event: AstrMessageEvent):
@@ -516,10 +527,14 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield event.chain_result(msg.chain)
+            mer = MessageEventResult()
+            mer.chain = msg.chain
+            yield mer
         else:
             for chain in chains:
-                yield event.chain_result(chain.chain)
+                mer = MessageEventResult()
+                mer.chain = chain.chain
+                yield mer
 
         # 标记已发送
         if self._history:
