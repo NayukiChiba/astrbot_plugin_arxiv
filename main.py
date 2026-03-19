@@ -314,6 +314,24 @@ class ArxivPlugin(Star):
     def arxiv_group(self):
         """ArXiv 论文相关指令组。"""
 
+    @arxiv_group.command("help")
+    async def cmd_help(self, event: AstrMessageEvent):
+        """显示帮助信息。"""
+        lines = [
+            "📖 ArXiv 插件帮助",
+            "",
+            "可用指令：",
+            "  /arxiv help — 显示本帮助信息",
+            "  /arxiv search <关键词> — 搜索论文",
+            "  /arxiv latest — 获取最新论文（按配置的分类）",
+            "  /arxiv categories — 列出所有支持的学科分类",
+            "  /arxiv status — 查看插件当前配置和状态",
+            "  /arxiv add_session — 将当前会话加入定时推送列表",
+            "  /arxiv remove_session — 将当前会话移出推送列表",
+            "  /arxiv push_now — 立即推送最新论文到当前会话（去重）",
+        ]
+        yield event.plain_result("\n".join(lines))
+
     @arxiv_group.command("search")
     async def cmd_search(
         self, event: AstrMessageEvent, query: GreedyStr = GreedyStr("")

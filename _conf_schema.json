@@ -18,7 +18,7 @@
       "max_results": {
         "description": "每次推送/搜索的最大论文数量",
         "type": "int",
-        "default": 5
+        "default": 1
       },
       "timeout_seconds": {
         "description": "HTTP 请求超时 (秒)",
@@ -52,7 +52,7 @@
         "description": "使用合并转发",
         "type": "bool",
         "hint": "开启后使用合并转发模式发送论文，关闭则逐条发送。合并转发需平台支持（如 QQ）。",
-        "default": true
+        "default": false
       },
       "bot_name": {
         "description": "机器人昵称（合并转发显示）",
