@@ -328,7 +328,6 @@ class ArxivPlugin(Star):
             "  /arxiv status — 查看插件当前配置和状态",
             "  /arxiv add_session — 将当前会话加入定时推送列表",
             "  /arxiv remove_session — 将当前会话移出推送列表",
-            "  /arxiv push_now — 立即推送最新论文到当前会话（去重）",
         ]
         yield event.plain_result("\n".join(lines))
 
@@ -498,50 +497,6 @@ class ArxivPlugin(Star):
         self.config.save_config()
 
         yield event.plain_result("✅ 已从推送列表中移除当前会话。")
-
-    @arxiv_group.command("push_now")
-    async def cmd_push_now(self, event: AstrMessageEvent):
-        """立即推送最新论文到当前会话。用法: /arxiv push_now"""
-        categories = self._arxiv_cfg.get("categories", ["cs.AI"])
-        tags = self._arxiv_cfg.get("tags", [])
-        max_results = self._arxiv_cfg.get("max_results", 5)
-        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
-
-        yield event.plain_result("⏳ 正在获取最新论文...")
-
-        try:
-            papers = await arxiv_client.get_latest_papers(
-                categories=categories,
-                tags=tags,
-                max_results=max_results,
-                timeout=timeout,
-            )
-        except Exception:
-            logger.exception("ArXiv push_now 获取论文失败。")
-            yield event.plain_result("❌ 获取论文失败，请稍后重试。")
-            return
-
-        if not papers:
-            yield event.plain_result("📭 当前分类下没有找到论文。")
-            return
-
-        chains = await self._process_papers(papers)
-        if not chains:
-            yield event.plain_result("📭 处理论文时出错。")
-            return
-
-        use_forward = self._send_cfg.get("use_forward", True)
-        if use_forward:
-            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
-            msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            mer = MessageEventResult()
-            mer.chain = msg.chain
-            yield mer
-        else:
-            for chain in chains:
-                mer = MessageEventResult()
-                mer.chain = chain.chain
-                yield mer
 
     async def terminate(self) -> None:
         """插件卸载时清理定时任务和临时文件。"""
