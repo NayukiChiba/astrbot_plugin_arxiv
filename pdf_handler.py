@@ -55,8 +55,19 @@ async def download_pdf(
             async with session.get(
                 url,
                 timeout=aiohttp.ClientTimeout(total=timeout),
+                allow_redirects=True,
             ) as resp:
                 resp.raise_for_status()
+
+                # 检查响应类型，拒绝 HTML 响应
+                content_type = resp.headers.get("Content-Type", "")
+                if "text/html" in content_type:
+                    logger.warning(
+                        "PDF %s 返回了 HTML 而非 PDF (Content-Type: %s)",
+                        url,
+                        content_type,
+                    )
+                    return None
 
                 # 优先检查 Content-Length 头
                 content_length = resp.headers.get("Content-Length")
@@ -84,6 +95,19 @@ async def download_pdf(
                             return None
                         f.write(chunk)
 
+        # 验证下载的文件是否为有效 PDF（检查文件头魔数）
+        with open(save_path, "rb") as f:
+            header = f.read(5)
+        if header != b"%PDF-":
+            logger.warning(
+                "PDF %s 下载的文件不是有效的 PDF (文件头: %r)",
+                url,
+                header,
+            )
+            save_path.unlink(missing_ok=True)
+            return None
+
+        logger.info("PDF 下载成功: %s (%d 字节)", save_path.name, downloaded)
         return save_path
 
     except Exception:

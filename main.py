@@ -209,7 +209,7 @@ class ArxivPlugin(Star):
 
     @staticmethod
     def _make_result(chain: MessageChain) -> MessageEventResult:
-        """Create a MessageEventResult with t2i forcefully disabled."""
+        """创建一个强制关闭 t2i 的 MessageEventResult。"""
         mer = MessageEventResult()
         mer.chain = chain.chain
         mer.use_t2i_ = False

@@ -127,7 +127,14 @@ def _parse_feed_entry(entry: dict) -> ArxivPaper:
             pdf_url = link.get("href", "")
             break
     if not pdf_url and arxiv_id:
-        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
+        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+    # 确保 PDF URL 以 .pdf 结尾且使用 https
+    if pdf_url:
+        if pdf_url.startswith("http://"):
+            pdf_url = pdf_url.replace("http://", "https://", 1)
+        if not pdf_url.endswith(".pdf"):
+            pdf_url += ".pdf"
 
     # 提取作者列表
     authors = [a.get("name", "") for a in entry.get("authors", [])]
