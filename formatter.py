@@ -73,22 +73,10 @@ def format_paper_text(
     # 链接
     lines.append(f"详情: {paper.abs_url}")
 
-    # 摘要（仅在不使用图片模式时以文本形式显示）
-    if show_abstract:
-        abs_text = abstract_text or paper.abstract
-        if abs_text:
-            if len(abs_text) > 800:
-                abs_text = abs_text[:800] + "..."
-            lines.append(f"摘要: {abs_text}")
-
-    # LLM 总结
-    if summary_text:
-        lines.append(f"AI 总结: {summary_text}")
-
     return "\n".join(lines)
 
 
-def build_paper_chain(
+def build_paper_chains(
     paper: ArxivPaper,
     *,
     index: int = 0,
@@ -98,10 +86,12 @@ def build_paper_chain(
     screenshot_path: str = "",
     pdf_path: str = "",
     abstract_image_path: str = "",
-) -> MessageChain:
-    """为单篇论文构建消息链。
+) -> list[MessageChain]:
+    """为单篇论文构建消息链列表。
 
-    构建顺序: 文本信息 -> 摘要图片 -> PDF 首页截图 -> PDF 附件
+    每篇论文可能产生多条消息：
+    1. 论文基本信息（标题、作者等）+ PDF 截图 + PDF 附件
+    2. 摘要（图片或文本，单独一条消息）
 
     Args:
         paper: ArxivPaper 对象。
@@ -114,33 +104,53 @@ def build_paper_chain(
         abstract_image_path: 摘要渲染图片的绝对路径。
 
     Returns:
-        包含论文信息的 MessageChain。
+        MessageChain 列表。
     """
-    chain = MessageChain()
+    chains: list[MessageChain] = []
 
-    # 文本内容（不含摘要）
+    # 第 1 条消息：论文基本信息
+    info_chain = MessageChain()
     text = format_paper_text(
         paper,
         index=index,
         show_abstract=False,
         summary_text=summary_text,
     )
-    chain.chain.append(Plain(text))
+    info_chain.chain.append(Plain(text))
+    chains.append(info_chain)
 
-    # 摘要图片
-    if abstract_image_path:
-        chain.chain.append(Image.fromFileSystem(abstract_image_path))
+    # 第 2 条消息：摘要（图片或文本）
+    if show_abstract:
+        abstract_chain = MessageChain()
+        if abstract_image_path:
+            abstract_chain.chain.append(Image.fromFileSystem(abstract_image_path))
+            chains.append(abstract_chain)
+        else:
+            abs_text = abstract_text or paper.abstract
+            if abs_text:
+                abstract_chain.chain.append(Plain(f"📝 摘要:\n{abs_text}"))
+                chains.append(abstract_chain)
 
-    # PDF 首页截图
+    # 第 3 条消息：PDF 首页截图
     if screenshot_path:
-        chain.chain.append(Image.fromFileSystem(screenshot_path))
+        screenshot_chain = MessageChain()
+        screenshot_chain.chain.append(Image.fromFileSystem(screenshot_path))
+        chains.append(screenshot_chain)
 
-    # PDF 文件附件
+    # 第 4 条消息：PDF 文件附件
     if pdf_path:
+        pdf_chain = MessageChain()
         pdf_name = f"{paper.arxiv_id.replace('/', '_')}.pdf"
-        chain.chain.append(File(name=pdf_name, file=pdf_path))
+        pdf_chain.chain.append(File(name=pdf_name, file=pdf_path))
+        chains.append(pdf_chain)
 
-    return chain
+    # 第 5 条消息：AI 总结
+    if summary_text:
+        summary_chain = MessageChain()
+        summary_chain.chain.append(Plain(f"🤖 AI 总结:\n{summary_text}"))
+        chains.append(summary_chain)
+
+    return chains
 
 
 def build_forward_nodes(

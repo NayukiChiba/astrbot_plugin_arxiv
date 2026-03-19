@@ -226,13 +226,17 @@ class ArxivPlugin(Star):
         for i, paper in enumerate(papers, 1):
             try:
                 logger.info("处理论文 [%d/%d]: %s", i, len(papers), paper.title)
-                chain = await self._process_single_paper(paper, index=i)
-                chains.append(chain)
-                logger.info("论文 %s 处理完成。", paper.arxiv_id)
+                paper_chains = await self._process_single_paper(paper, index=i)
+                chains.extend(paper_chains)
+                logger.info(
+                    "论文 %s 处理完成，生成 %d 条消息。",
+                    paper.arxiv_id,
+                    len(paper_chains),
+                )
             except Exception:
                 logger.exception("处理论文 %s 失败，跳过。", paper.arxiv_id)
 
-        logger.info("论文处理完毕，成功 %d/%d 篇。", len(chains), len(papers))
+        logger.info("论文处理完毕，成功生成 %d 条消息。", len(chains))
         return chains
 
     async def _process_single_paper(
@@ -240,7 +244,7 @@ class ArxivPlugin(Star):
         paper: arxiv_client.ArxivPaper,
         *,
         index: int = 0,
-    ) -> MessageChain:
+    ) -> list[MessageChain]:
         """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染摘要图片。"""
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
         abstract_text = ""
@@ -342,10 +346,10 @@ class ArxivPlugin(Star):
         if downloaded_pdf and self._send_cfg.get("attach_pdf", False):
             pdf_path_str = str(downloaded_pdf)
 
-        return formatter.build_paper_chain(
+        return formatter.build_paper_chains(
             paper,
             index=index,
-            show_abstract=send_abstract and not bool(abstract_image_path),
+            show_abstract=send_abstract,
             abstract_text=abstract_text,
             summary_text=summary_text,
             screenshot_path=screenshot_path,
