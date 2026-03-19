@@ -1,0 +1,129 @@
+{
+  "arxiv_config": {
+    "description": "ArXiv 论文配置",
+    "type": "object",
+    "items": {
+      "categories": {
+        "description": "学科分类代码列表",
+        "type": "list",
+        "hint": "arXiv 学科分类，如 cs.AI, cs.LG, math.CO。使用 /arxiv categories 查看所有可用分类。",
+        "default": ["cs.AI"]
+      },
+      "tags": {
+        "description": "关键词标签（模糊匹配）",
+        "type": "list",
+        "hint": "额外的关键词标签，用于模糊匹配论文内容。留空则仅按分类筛选。",
+        "default": []
+      },
+      "max_results": {
+        "description": "每次推送/搜索的最大论文数量",
+        "type": "int",
+        "default": 5
+      },
+      "timeout_seconds": {
+        "description": "HTTP 请求超时 (秒)",
+        "type": "int",
+        "default": 30
+      }
+    }
+  },
+  "send_config": {
+    "description": "发送配置",
+    "type": "object",
+    "items": {
+      "push_time": {
+        "description": "每日推送时间",
+        "type": "string",
+        "hint": "格式 HH:MM，如 09:00 表示每天上午 9 点推送。",
+        "default": "09:00"
+      },
+      "push_timezone": {
+        "description": "推送时区",
+        "type": "string",
+        "default": "Asia/Shanghai"
+      },
+      "target_sessions": {
+        "description": "目标 UMO 会话列表",
+        "type": "list",
+        "hint": "自动推送的目标会话列表。可通过 /arxiv add_session 指令快捷添加当前会话。",
+        "default": []
+      },
+      "use_forward": {
+        "description": "使用合并转发",
+        "type": "bool",
+        "hint": "开启后使用合并转发模式发送论文，关闭则逐条发送。合并转发需平台支持（如 QQ）。",
+        "default": true
+      },
+      "bot_name": {
+        "description": "机器人昵称（合并转发显示）",
+        "type": "string",
+        "default": "ArXiv Bot"
+      },
+      "send_abstract": {
+        "description": "发送论文摘要",
+        "type": "bool",
+        "default": true
+      },
+      "attach_pdf": {
+        "description": "附带 PDF 文件",
+        "type": "bool",
+        "default": false
+      },
+      "screenshot_pdf": {
+        "description": "截图 PDF 首页",
+        "type": "bool",
+        "default": true
+      },
+      "screenshot_dpi": {
+        "description": "截图 DPI",
+        "type": "int",
+        "hint": "PDF 首页截图的渲染精度，建议 72~300。数值越高越清晰，文件越大。",
+        "default": 150
+      },
+      "max_pdf_size_mb": {
+        "description": "PDF 最大体积限制 (MB)",
+        "type": "int",
+        "hint": "超出此大小的 PDF 将被跳过。",
+        "default": 20
+      },
+      "history_retention_days": {
+        "description": "已发送记录保留天数",
+        "type": "int",
+        "hint": "超过此天数的发送记录将被自动清理，用于去重。",
+        "default": 30
+      }
+    }
+  },
+  "llm_config": {
+    "description": "LLM 赋能配置",
+    "type": "object",
+    "items": {
+      "abstract_mode": {
+        "description": "摘要处理方式",
+        "type": "string",
+        "options": ["original", "llm_chinese"],
+        "hint": "original: 保留英文原文; llm_chinese: 使用 LLM 翻译为中文。",
+        "default": "original"
+      },
+      "llm_summarize": {
+        "description": "使用 LLM 总结论文",
+        "type": "bool",
+        "hint": "启用后将提取 PDF 文本并调用 LLM 生成中文总结。需要配置下方的 LLM 提供商。",
+        "default": false
+      },
+      "llm_provider_id": {
+        "description": "LLM 提供商",
+        "type": "string",
+        "_special": "select_provider",
+        "hint": "用于摘要翻译和论文总结的 LLM 提供商。",
+        "default": ""
+      },
+      "llm_summary_prompt": {
+        "description": "自定义总结 Prompt",
+        "type": "text",
+        "hint": "自定义 LLM 总结 prompt，需包含 {content} 占位符。留空使用默认 prompt。",
+        "default": ""
+      }
+    }
+  }
+}

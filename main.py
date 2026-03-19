@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.event import filter as event_filter
 from astrbot.api.star import Context, Star, StarTools, register
@@ -16,13 +16,7 @@ from astrbot.api.star import Context, Star, StarTools, register
 from . import arxiv_client, formatter, llm_service, pdf_handler
 from .history import SentHistory
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger("astrbot")
-
-# 插件命名空间，用于配置存储
-PLUGIN_NAME = "astrbot_plugin_arxiv"
 
 # 默认 LLM 总结 prompt
 _DEFAULT_SUMMARY_PROMPT = (
@@ -33,143 +27,19 @@ _DEFAULT_SUMMARY_PROMPT = (
 )
 
 
-def _init_config(plugin_name: str) -> None:
-    """注册所有插件配置项到 WebUI 面板。"""
-    from astrbot.core.star.config import put_config
+def _time_to_cron(time_str: str) -> str:
+    """将 HH:MM 格式的时间字符串转换为 cron 表达式。
 
-    put_config(
-        plugin_name,
-        "学科分类",
-        "categories",
-        ["cs.AI"],
-        "arXiv 学科分类代码列表，例如 cs.AI, cs.LG, math.CO",
-    )
-    put_config(
-        plugin_name,
-        "关键词标签",
-        "tags",
-        [],
-        "额外的关键词标签，用于模糊匹配（留空则仅按分类筛选）",
-    )
-    put_config(
-        plugin_name,
-        "每次推送数量",
-        "max_results",
-        5,
-        "每次推送或搜索的最大论文数量",
-    )
-    put_config(
-        plugin_name,
-        "定时表达式",
-        "cron_expression",
-        "0 9 * * *",
-        "Cron 定时表达式（默认每天早上 9 点）",
-    )
-    put_config(
-        plugin_name,
-        "时区",
-        "cron_timezone",
-        "Asia/Shanghai",
-        "定时任务时区",
-    )
-    put_config(
-        plugin_name,
-        "目标会话列表",
-        "target_sessions",
-        [],
-        "自动推送的目标 UMO 会话列表（从消息事件中获取 unified_msg_origin）",
-    )
-    put_config(
-        plugin_name,
-        "发送模式",
-        "send_mode",
-        "forward",
-        "发送方式: forward (合并转发) 或 individual (逐条发送)",
-    )
-    put_config(
-        plugin_name,
-        "附带 PDF",
-        "attach_pdf",
-        False,
-        "是否附带 PDF 文件",
-    )
-    put_config(
-        plugin_name,
-        "截图 PDF 首页",
-        "screenshot_pdf",
-        True,
-        "是否截取 PDF 第一页作为图片发送",
-    )
-    put_config(
-        plugin_name,
-        "截图 DPI",
-        "screenshot_dpi",
-        150,
-        "PDF 首页截图的渲染精度（DPI），建议 72~300",
-    )
-    put_config(
-        plugin_name,
-        "PDF 最大体积 (MB)",
-        "max_pdf_size_mb",
-        20,
-        "允许处理的 PDF 最大文件大小（MB）",
-    )
-    put_config(
-        plugin_name,
-        "超时时间 (秒)",
-        "timeout_seconds",
-        30,
-        "HTTP 请求超时时间（秒）",
-    )
-    put_config(
-        plugin_name,
-        "发送摘要",
-        "send_abstract",
-        True,
-        "是否在消息中包含论文摘要",
-    )
-    put_config(
-        plugin_name,
-        "摘要模式",
-        "abstract_mode",
-        "original",
-        "摘要处理方式: original (原文) 或 llm_chinese (LLM 翻译为中文)",
-    )
-    put_config(
-        plugin_name,
-        "LLM 总结论文",
-        "llm_summarize",
-        False,
-        "是否使用 LLM 扫描 PDF 并生成论文总结",
-    )
-    put_config(
-        plugin_name,
-        "LLM 提供商 ID",
-        "llm_provider_id",
-        "",
-        "用于 LLM 功能的提供商 ID（留空则使用默认提供商）",
-    )
-    put_config(
-        plugin_name,
-        "LLM 总结 Prompt",
-        "llm_summary_prompt",
-        "",
-        "自定义 LLM 总结 prompt，需包含 {content} 占位符（留空使用默认）",
-    )
-    put_config(
-        plugin_name,
-        "机器人名称",
-        "bot_name",
-        "ArXiv Bot",
-        "合并转发消息中显示的机器人昵称",
-    )
-    put_config(
-        plugin_name,
-        "历史保留天数",
-        "history_retention_days",
-        30,
-        "已发送论文记录的保留天数（用于去重）",
-    )
+    例如 '09:00' -> '0 9 * * *', '14:30' -> '30 14 * * *'
+    """
+    try:
+        parts = time_str.strip().split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        return f"{minute} {hour} * * *"
+    except (ValueError, IndexError):
+        logger.warning("无法解析推送时间 '%s'，使用默认 09:00。", time_str)
+        return "0 9 * * *"
 
 
 @register(
@@ -181,29 +51,42 @@ def _init_config(plugin_name: str) -> None:
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
 
-    def __init__(self, context: Context) -> None:
+    def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
+        self.config = config
         self._data_dir: Path = Path()
         self._temp_dir: Path = Path()
         self._history: SentHistory | None = None
-        self._config: dict = {}
         self._cron_job_id: str = ""
 
+    # ── 便捷配置访问 ──────────────────────────────────────────
+
+    @property
+    def _arxiv_cfg(self) -> dict:
+        """获取 arXiv 论文配置。"""
+        return self.config.get("arxiv_config", {})
+
+    @property
+    def _send_cfg(self) -> dict:
+        """获取发送配置。"""
+        return self.config.get("send_config", {})
+
+    @property
+    def _llm_cfg(self) -> dict:
+        """获取 LLM 赋能配置。"""
+        return self.config.get("llm_config", {})
+
+    # ── 生命周期 ──────────────────────────────────────────────
+
     async def initialize(self) -> None:
-        """插件初始化：注册配置、加载历史、设置定时任务。"""
-        # 注册配置项
-        _init_config(PLUGIN_NAME)
-
-        # 加载配置
-        self._load_config()
-
+        """插件初始化：加载历史、设置定时任务。"""
         # 初始化数据目录
-        self._data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+        self._data_dir = StarTools.get_data_dir("astrbot_plugin_arxiv")
         self._temp_dir = self._data_dir / "temp"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
 
         # 初始化已发送历史
-        retention = self._config.get("history_retention_days", 30)
+        retention = self._send_cfg.get("history_retention_days", 30)
         self._history = SentHistory(self._data_dir, retention_days=retention)
 
         # 清理过期记录
@@ -216,27 +99,18 @@ class ArxivPlugin(Star):
 
         logger.info("ArXiv 论文推送插件已初始化。")
 
-    def _load_config(self) -> None:
-        """从配置文件加载插件配置。"""
-        from astrbot.core.star.config import load_config
-
-        cfg = load_config(PLUGIN_NAME)
-        if isinstance(cfg, dict):
-            self._config = cfg
-        else:
-            self._config = {}
-
     async def _register_cron_job(self) -> None:
         """注册定时推送任务。"""
-        cron_expr = self._config.get("cron_expression", "0 9 * * *")
-        timezone = self._config.get("cron_timezone", "Asia/Shanghai")
+        push_time = self._send_cfg.get("push_time", "09:00")
+        timezone = self._send_cfg.get("push_timezone", "Asia/Shanghai")
+        cron_expr = _time_to_cron(push_time)
 
         try:
             job = await self.context.cron_manager.add_basic_job(
                 name="arxiv_daily_push",
                 cron_expression=cron_expr,
                 handler=self._scheduled_push,
-                description="ArXiv 每日论文定时推送",
+                description=f"ArXiv 每日论文推送 ({push_time})",
                 timezone=timezone,
                 enabled=True,
                 persistent=False,
@@ -244,7 +118,7 @@ class ArxivPlugin(Star):
             self._cron_job_id = job.job_id
             logger.info(
                 "ArXiv 定时推送已注册: %s (%s)",
-                cron_expr,
+                push_time,
                 timezone,
             )
         except Exception:
@@ -254,17 +128,15 @@ class ArxivPlugin(Star):
 
     async def _scheduled_push(self) -> None:
         """定时推送入口：获取最新论文并发送到所有目标会话。"""
-        self._load_config()  # 重新加载配置以获取最新设置
-
-        target_sessions: list[str] = self._config.get("target_sessions", [])
+        target_sessions: list[str] = self._send_cfg.get("target_sessions", [])
         if not target_sessions:
             logger.info("ArXiv 定时推送：未配置目标会话，跳过。")
             return
 
-        categories = self._config.get("categories", ["cs.AI"])
-        tags = self._config.get("tags", [])
-        max_results = self._config.get("max_results", 5)
-        timeout = self._config.get("timeout_seconds", 30)
+        categories = self._arxiv_cfg.get("categories", ["cs.AI"])
+        tags = self._arxiv_cfg.get("tags", [])
+        max_results = self._arxiv_cfg.get("max_results", 5)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
         try:
             papers = await arxiv_client.get_latest_papers(
@@ -305,18 +177,17 @@ class ArxivPlugin(Star):
         if not chains:
             return
 
-        # 根据模式发送
-        send_mode = self._config.get("send_mode", "forward")
+        # 根据配置的模式发送
+        use_forward = self._send_cfg.get("use_forward", True)
         try:
-            if send_mode == "forward":
-                bot_name = self._config.get("bot_name", "ArXiv Bot")
+            if use_forward:
+                bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
                 msg = formatter.build_forward_nodes(
                     chains,
                     bot_name=bot_name,
                 )
                 await self.context.send_message(session, msg)
             else:
-                # 逐条发送
                 for chain in chains:
                     await self.context.send_message(session, chain)
         except Exception:
@@ -362,14 +233,14 @@ class ArxivPlugin(Star):
         screenshot_path = ""
         pdf_path_str = ""
 
-        timeout = self._config.get("timeout_seconds", 30)
-        max_pdf_size = self._config.get("max_pdf_size_mb", 20)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
+        max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
 
         # 摘要处理
-        if self._config.get("send_abstract", True):
-            abstract_mode = self._config.get("abstract_mode", "original")
+        if self._send_cfg.get("send_abstract", True):
+            abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
-                provider_id = self._config.get("llm_provider_id", "")
+                provider_id = self._llm_cfg.get("llm_provider_id", "")
                 abstract_text = await llm_service.translate_abstract(
                     self.context,
                     paper.abstract,
@@ -378,11 +249,11 @@ class ArxivPlugin(Star):
             else:
                 abstract_text = paper.abstract
 
-        # 是否需要下载 PDF（截图或附件或 LLM 总结都需要）
+        # 是否需要下载 PDF（截图、附件、LLM 总结都需要 PDF）
         need_pdf = (
-            self._config.get("screenshot_pdf", True)
-            or self._config.get("attach_pdf", False)
-            or self._config.get("llm_summarize", False)
+            self._send_cfg.get("screenshot_pdf", True)
+            or self._send_cfg.get("attach_pdf", False)
+            or self._llm_cfg.get("llm_summarize", False)
         )
 
         downloaded_pdf: Path | None = None
@@ -395,8 +266,8 @@ class ArxivPlugin(Star):
             )
 
         # PDF 首页截图
-        if downloaded_pdf and self._config.get("screenshot_pdf", True):
-            dpi = self._config.get("screenshot_dpi", 150)
+        if downloaded_pdf and self._send_cfg.get("screenshot_pdf", True):
+            dpi = self._send_cfg.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
                 downloaded_pdf,
                 self._temp_dir,
@@ -406,15 +277,12 @@ class ArxivPlugin(Star):
                 screenshot_path = str(screenshot)
 
         # LLM 总结
-        if downloaded_pdf and self._config.get("llm_summarize", False):
+        if downloaded_pdf and self._llm_cfg.get("llm_summarize", False):
             pdf_text = pdf_handler.extract_text(downloaded_pdf)
             if pdf_text:
-                provider_id = self._config.get("llm_provider_id", "")
+                provider_id = self._llm_cfg.get("llm_provider_id", "")
                 custom_prompt = (
-                    self._config.get(
-                        "llm_summary_prompt",
-                        "",
-                    )
+                    self._llm_cfg.get("llm_summary_prompt", "")
                     or _DEFAULT_SUMMARY_PROMPT
                 )
                 summary_text = await llm_service.summarize_paper(
@@ -425,13 +293,13 @@ class ArxivPlugin(Star):
                 )
 
         # PDF 附件
-        if downloaded_pdf and self._config.get("attach_pdf", False):
+        if downloaded_pdf and self._send_cfg.get("attach_pdf", False):
             pdf_path_str = str(downloaded_pdf)
 
         return formatter.build_paper_chain(
             paper,
             index=index,
-            show_abstract=self._config.get("send_abstract", True),
+            show_abstract=self._send_cfg.get("send_abstract", True),
             abstract_text=abstract_text,
             summary_text=summary_text,
             screenshot_path=screenshot_path,
@@ -447,9 +315,7 @@ class ArxivPlugin(Star):
     @arxiv_group.command("search")
     async def cmd_search(self, event: AstrMessageEvent):
         """搜索 arXiv 论文。用法: /arxiv search <关键词>"""
-        # 提取搜索关键词（去掉指令本身）
         query = event.message_str.strip()
-        # 移除指令前缀
         for prefix in ["/arxiv search ", "arxiv search "]:
             if query.lower().startswith(prefix):
                 query = query[len(prefix) :].strip()
@@ -461,9 +327,8 @@ class ArxivPlugin(Star):
             )
             return
 
-        self._load_config()
-        max_results = self._config.get("max_results", 5)
-        timeout = self._config.get("timeout_seconds", 30)
+        max_results = self._arxiv_cfg.get("max_results", 5)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
         try:
             papers = await arxiv_client.search_papers(
@@ -485,9 +350,9 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 处理论文时出错。")
             return
 
-        send_mode = self._config.get("send_mode", "forward")
-        if send_mode == "forward":
-            bot_name = self._config.get("bot_name", "ArXiv Bot")
+        use_forward = self._send_cfg.get("use_forward", True)
+        if use_forward:
+            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
             yield event.result_message(msg)
         else:
@@ -497,12 +362,10 @@ class ArxivPlugin(Star):
     @arxiv_group.command("latest")
     async def cmd_latest(self, event: AstrMessageEvent):
         """手动获取最新论文。用法: /arxiv latest"""
-        self._load_config()
-
-        categories = self._config.get("categories", ["cs.AI"])
-        tags = self._config.get("tags", [])
-        max_results = self._config.get("max_results", 5)
-        timeout = self._config.get("timeout_seconds", 30)
+        categories = self._arxiv_cfg.get("categories", ["cs.AI"])
+        tags = self._arxiv_cfg.get("tags", [])
+        max_results = self._arxiv_cfg.get("max_results", 5)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
         try:
             papers = await arxiv_client.get_latest_papers(
@@ -525,9 +388,9 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 处理论文时出错。")
             return
 
-        send_mode = self._config.get("send_mode", "forward")
-        if send_mode == "forward":
-            bot_name = self._config.get("bot_name", "ArXiv Bot")
+        use_forward = self._send_cfg.get("use_forward", True)
+        if use_forward:
+            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
             yield event.result_message(msg)
         else:
@@ -543,18 +406,16 @@ class ArxivPlugin(Star):
     @arxiv_group.command("status")
     async def cmd_status(self, event: AstrMessageEvent):
         """显示插件当前配置和状态。"""
-        self._load_config()
+        categories = self._arxiv_cfg.get("categories", [])
+        tags = self._arxiv_cfg.get("tags", [])
+        push_time = self._send_cfg.get("push_time", "09:00")
+        timezone = self._send_cfg.get("push_timezone", "Asia/Shanghai")
+        targets = self._send_cfg.get("target_sessions", [])
+        use_forward = self._send_cfg.get("use_forward", True)
+        abstract_mode = self._llm_cfg.get("abstract_mode", "original")
+        max_results = self._arxiv_cfg.get("max_results", 5)
 
-        categories = self._config.get("categories", [])
-        tags = self._config.get("tags", [])
-        cron_expr = self._config.get("cron_expression", "0 9 * * *")
-        timezone = self._config.get("cron_timezone", "Asia/Shanghai")
-        targets = self._config.get("target_sessions", [])
-        send_mode = self._config.get("send_mode", "forward")
-        abstract_mode = self._config.get("abstract_mode", "original")
-        max_results = self._config.get("max_results", 5)
-
-        mode_display = "合并转发" if send_mode == "forward" else "逐条发送"
+        mode_display = "合并转发" if use_forward else "逐条发送"
         abstract_display = "原文" if abstract_mode == "original" else "LLM 中文翻译"
 
         lines = [
@@ -563,13 +424,13 @@ class ArxivPlugin(Star):
             f"📚 学科分类: {', '.join(categories) or '未配置'}",
             f"🏷️ 关键词: {', '.join(tags) or '无'}",
             f"📄 每次推送: {max_results} 篇",
-            f"⏰ 定时表达式: {cron_expr} ({timezone})",
+            f"⏰ 推送时间: {push_time} ({timezone})",
             f"🎯 目标会话: {len(targets)} 个",
             f"📨 发送模式: {mode_display}",
             f"📝 摘要模式: {abstract_display}",
-            f"🖼️ PDF 截图: {'开启' if self._config.get('screenshot_pdf') else '关闭'}",
-            f"📎 附带 PDF: {'开启' if self._config.get('attach_pdf') else '关闭'}",
-            f"🤖 LLM 总结: {'开启' if self._config.get('llm_summarize') else '关闭'}",
+            f"🖼️ PDF 截图: {'开启' if self._send_cfg.get('screenshot_pdf') else '关闭'}",
+            f"📎 附带 PDF: {'开启' if self._send_cfg.get('attach_pdf') else '关闭'}",
+            f"🤖 LLM 总结: {'开启' if self._llm_cfg.get('llm_summarize') else '关闭'}",
         ]
 
         yield event.plain_result("\n".join(lines))
@@ -577,51 +438,48 @@ class ArxivPlugin(Star):
     @arxiv_group.command("add_session")
     async def cmd_add_session(self, event: AstrMessageEvent):
         """将当前会话添加为推送目标。用法: /arxiv add_session"""
-        self._load_config()
         umo = event.unified_msg_origin
 
-        targets: list[str] = self._config.get("target_sessions", [])
+        send_cfg = self.config.get("send_config", {})
+        targets: list[str] = list(send_cfg.get("target_sessions", []))
         if umo in targets:
             yield event.plain_result("ℹ️ 当前会话已在推送列表中。")
             return
 
         targets.append(umo)
-        from astrbot.core.star.config import update_config
-
-        update_config(PLUGIN_NAME, "target_sessions", targets)
-        self._config["target_sessions"] = targets
+        send_cfg["target_sessions"] = targets
+        self.config["send_config"] = send_cfg
+        self.config.save_config()
 
         yield event.plain_result(f"✅ 已添加当前会话到推送列表。\n会话标识: {umo}")
 
     @arxiv_group.command("remove_session")
     async def cmd_remove_session(self, event: AstrMessageEvent):
         """将当前会话从推送目标中移除。用法: /arxiv remove_session"""
-        self._load_config()
         umo = event.unified_msg_origin
 
-        targets: list[str] = self._config.get("target_sessions", [])
+        send_cfg = self.config.get("send_config", {})
+        targets: list[str] = list(send_cfg.get("target_sessions", []))
         if umo not in targets:
             yield event.plain_result("ℹ️ 当前会话不在推送列表中。")
             return
 
         targets.remove(umo)
-        from astrbot.core.star.config import update_config
-
-        update_config(PLUGIN_NAME, "target_sessions", targets)
-        self._config["target_sessions"] = targets
+        send_cfg["target_sessions"] = targets
+        self.config["send_config"] = send_cfg
+        self.config.save_config()
 
         yield event.plain_result("✅ 已从推送列表中移除当前会话。")
 
     @arxiv_group.command("push_now")
     async def cmd_push_now(self, event: AstrMessageEvent):
-        """立即向当前会话推送最新论文（不影响定时推送）。用法: /arxiv push_now"""
-        self._load_config()
+        """立即推送最新论文到当前会话（去重）。用法: /arxiv push_now"""
         umo = event.unified_msg_origin
 
-        categories = self._config.get("categories", ["cs.AI"])
-        tags = self._config.get("tags", [])
-        max_results = self._config.get("max_results", 5)
-        timeout = self._config.get("timeout_seconds", 30)
+        categories = self._arxiv_cfg.get("categories", ["cs.AI"])
+        tags = self._arxiv_cfg.get("tags", [])
+        max_results = self._arxiv_cfg.get("max_results", 5)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
         yield event.plain_result("⏳ 正在获取最新论文...")
 
@@ -654,9 +512,9 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 处理论文时出错。")
             return
 
-        send_mode = self._config.get("send_mode", "forward")
-        if send_mode == "forward":
-            bot_name = self._config.get("bot_name", "ArXiv Bot")
+        use_forward = self._send_cfg.get("use_forward", True)
+        if use_forward:
+            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
             yield event.result_message(msg)
         else:
@@ -671,7 +529,7 @@ class ArxivPlugin(Star):
             )
 
     async def terminate(self) -> None:
-        """插件卸载时清理定时任务。"""
+        """插件卸载时清理定时任务和临时文件。"""
         if self._cron_job_id:
             try:
                 await self.context.cron_manager.delete_job(self._cron_job_id)
