@@ -9,7 +9,18 @@ from __future__ import annotations
 from astrbot.api.message_components import File, Image, Node, Nodes, Plain
 from astrbot.core.message.message_event_result import MessageChain
 
-from .arxiv_client import ArxivPaper
+from .arxiv_client import ARXIV_CATEGORIES, ArxivPaper
+
+
+def _get_category_display(categories: list[str]) -> str:
+    """将分类代码转换为 '代码 / 中文名' 格式。"""
+    if not categories:
+        return "未知"
+    primary = categories[0]
+    cn_name = ARXIV_CATEGORIES.get(primary, "")
+    if cn_name:
+        return f"{primary} / {cn_name}"
+    return primary
 
 
 def format_paper_text(
@@ -20,7 +31,7 @@ def format_paper_text(
     abstract_text: str = "",
     summary_text: str = "",
 ) -> str:
-    """将论文元数据格式化为可读文本块。
+    """将论文元数据格式化为结构化文本。
 
     Args:
         paper: ArxivPaper 对象。
@@ -34,43 +45,45 @@ def format_paper_text(
     """
     lines: list[str] = []
 
-    # 标题
-    title = paper.title
+    # 头部
+    header = "📚 ArXiv 论文推送"
     if index > 0:
-        title = f"[{index}] {title}"
-    lines.append(f"📄 {title}")
-    lines.append("")
+        header += f" [{index}]"
+    lines.append(header)
+
+    # 分区
+    lines.append(f"分区: {_get_category_display(paper.categories)}")
+
+    # 标题
+    lines.append(f"标题: {paper.title}")
 
     # 作者
     authors_str = ", ".join(paper.authors[:5])
     if len(paper.authors) > 5:
         authors_str += f" et al. (+{len(paper.authors) - 5})"
-    lines.append(f"👤 {authors_str}")
+    lines.append(f"作者: {authors_str}")
 
-    # 分类
-    if paper.categories:
-        lines.append(f"🏷️ {', '.join(paper.categories[:5])}")
+    # 提交时间
+    lines.append(f"提交时间: {paper.published_date}")
 
-    # 日期
-    lines.append(f"📅 {paper.published_date}")
+    # 全部分类标签
+    if len(paper.categories) > 1:
+        lines.append(f"标签: {', '.join(paper.categories)}")
 
     # 链接
-    lines.append(f"🔗 {paper.abs_url}")
+    lines.append(f"详情: {paper.abs_url}")
 
-    # 摘要
+    # 摘要（仅在不使用图片模式时以文本形式显示）
     if show_abstract:
         abs_text = abstract_text or paper.abstract
         if abs_text:
-            # 截断过长的摘要以提高可读性
             if len(abs_text) > 800:
                 abs_text = abs_text[:800] + "..."
-            lines.append("")
-            lines.append(f"📝 摘要:\n{abs_text}")
+            lines.append(f"摘要: {abs_text}")
 
     # LLM 总结
     if summary_text:
-        lines.append("")
-        lines.append(f"🤖 AI 总结:\n{summary_text}")
+        lines.append(f"AI 总结: {summary_text}")
 
     return "\n".join(lines)
 
@@ -84,8 +97,11 @@ def build_paper_chain(
     summary_text: str = "",
     screenshot_path: str = "",
     pdf_path: str = "",
+    abstract_image_path: str = "",
 ) -> MessageChain:
     """为单篇论文构建消息链。
+
+    构建顺序: 文本信息 -> 摘要图片 -> PDF 首页截图 -> PDF 附件
 
     Args:
         paper: ArxivPaper 对象。
@@ -95,23 +111,27 @@ def build_paper_chain(
         summary_text: LLM 总结文本。
         screenshot_path: PDF 首页截图的绝对路径。
         pdf_path: 要附带的 PDF 文件绝对路径。
+        abstract_image_path: 摘要渲染图片的绝对路径。
 
     Returns:
         包含论文信息的 MessageChain。
     """
     chain = MessageChain()
 
-    # 文本内容
+    # 文本内容（不含摘要）
     text = format_paper_text(
         paper,
         index=index,
-        show_abstract=show_abstract,
-        abstract_text=abstract_text,
+        show_abstract=False,
         summary_text=summary_text,
     )
     chain.chain.append(Plain(text))
 
-    # 截图图片
+    # 摘要图片
+    if abstract_image_path:
+        chain.chain.append(Image.fromFileSystem(abstract_image_path))
+
+    # PDF 首页截图
     if screenshot_path:
         chain.chain.append(Image.fromFileSystem(screenshot_path))
 
@@ -164,8 +184,6 @@ def build_no_results_chain() -> MessageChain:
 
 def build_categories_chain() -> MessageChain:
     """构建可用 arXiv 学科分类列表消息。"""
-    from .arxiv_client import ARXIV_CATEGORIES
-
     lines = ["📚 可用的 arXiv 学科分类:\n"]
     current_prefix = ""
     for code, name in sorted(ARXIV_CATEGORIES.items()):

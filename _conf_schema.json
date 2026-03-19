@@ -64,6 +64,12 @@
         "type": "bool",
         "default": true
       },
+      "abstract_as_image": {
+        "description": "摘要渲染为图片",
+        "type": "bool",
+        "hint": "开启后摘要单独渲染为长图片发送，关闭则以纯文本形式发送。",
+        "default": false
+      },
       "attach_pdf": {
         "description": "附带 PDF 文件",
         "type": "bool",

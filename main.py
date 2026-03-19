@@ -15,7 +15,7 @@ from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
 
-from . import arxiv_client, formatter, llm_service, pdf_handler
+from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
 from .history import SentHistory
 
 logger = logging.getLogger("astrbot")
@@ -207,20 +207,32 @@ class ArxivPlugin(Star):
             len(unsent_papers),
         )
 
+    @staticmethod
+    def _make_result(chain: MessageChain) -> MessageEventResult:
+        """Create a MessageEventResult with t2i forcefully disabled."""
+        mer = MessageEventResult()
+        mer.chain = chain.chain
+        mer.use_t2i_ = False
+        return mer
+
     async def _process_papers(
         self,
         papers: list[arxiv_client.ArxivPaper],
     ) -> list[MessageChain]:
         """处理论文列表，生成消息链。"""
+        logger.info("开始处理 %d 篇论文。", len(papers))
         chains: list[MessageChain] = []
 
         for i, paper in enumerate(papers, 1):
             try:
+                logger.info("处理论文 [%d/%d]: %s", i, len(papers), paper.title)
                 chain = await self._process_single_paper(paper, index=i)
                 chains.append(chain)
+                logger.info("论文 %s 处理完成。", paper.arxiv_id)
             except Exception:
                 logger.exception("处理论文 %s 失败，跳过。", paper.arxiv_id)
 
+        logger.info("论文处理完毕，成功 %d/%d 篇。", len(chains), len(papers))
         return chains
 
     async def _process_single_paper(
@@ -229,7 +241,8 @@ class ArxivPlugin(Star):
         *,
         index: int = 0,
     ) -> MessageChain:
-        """处理单篇论文：翻译摘要、下载 PDF、截图、总结。"""
+        """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染摘要图片。"""
+        logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
         abstract_text = ""
         summary_text = ""
         screenshot_path = ""
@@ -243,11 +256,13 @@ class ArxivPlugin(Star):
             abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
                 provider_id = self._llm_cfg.get("llm_provider_id", "")
+                logger.info("[%s] 使用 LLM 翻译摘要...", paper.arxiv_id)
                 abstract_text = await llm_service.translate_abstract(
                     self.context,
                     paper.abstract,
                     provider_id=provider_id,
                 )
+                logger.info("[%s] 摘要翻译完成。", paper.arxiv_id)
             else:
                 abstract_text = paper.abstract
 
@@ -260,12 +275,17 @@ class ArxivPlugin(Star):
 
         downloaded_pdf: Path | None = None
         if need_pdf and paper.pdf_url:
+            logger.info("[%s] 下载 PDF: %s", paper.arxiv_id, paper.pdf_url)
             downloaded_pdf = await pdf_handler.download_pdf(
                 paper.pdf_url,
                 self._temp_dir,
                 timeout=timeout,
                 max_size_mb=max_pdf_size,
             )
+            if downloaded_pdf:
+                logger.info("[%s] PDF 下载成功: %s", paper.arxiv_id, downloaded_pdf)
+            else:
+                logger.warning("[%s] PDF 下载失败。", paper.arxiv_id)
 
         # PDF 首页截图
         if downloaded_pdf and self._send_cfg.get("screenshot_pdf", True):
@@ -277,6 +297,9 @@ class ArxivPlugin(Star):
             )
             if screenshot:
                 screenshot_path = str(screenshot)
+                logger.info("[%s] PDF 首页截图成功。", paper.arxiv_id)
+            else:
+                logger.warning("[%s] PDF 首页截图失败。", paper.arxiv_id)
 
         # LLM 总结
         if downloaded_pdf and self._llm_cfg.get("llm_summarize", False):
@@ -294,6 +317,27 @@ class ArxivPlugin(Star):
                     custom_prompt=custom_prompt,
                 )
 
+        # 摘要渲染为图片（或文本）
+        abstract_image_path = ""
+        use_abstract_image = self._send_cfg.get("abstract_as_image", True)
+        send_abstract = self._send_cfg.get("send_abstract", True)
+
+        if send_abstract and abstract_text and use_abstract_image:
+            logger.info("[%s] 渲染摘要为图片...", paper.arxiv_id)
+            img_name = f"abstract_{paper.arxiv_id.replace('/', '_')}.png"
+            img_path = self._temp_dir / img_name
+            rendered = text_render.render_abstract_image(
+                abstract_text,
+                img_path,
+            )
+            if rendered:
+                abstract_image_path = str(rendered)
+                logger.info("[%s] 摘要图片渲染成功: %s", paper.arxiv_id, rendered)
+            else:
+                logger.warning(
+                    "[%s] 摘要图片渲染失败，将以文本形式发送。", paper.arxiv_id
+                )
+
         # PDF 附件
         if downloaded_pdf and self._send_cfg.get("attach_pdf", False):
             pdf_path_str = str(downloaded_pdf)
@@ -301,11 +345,12 @@ class ArxivPlugin(Star):
         return formatter.build_paper_chain(
             paper,
             index=index,
-            show_abstract=self._send_cfg.get("send_abstract", True),
+            show_abstract=send_abstract and not bool(abstract_image_path),
             abstract_text=abstract_text,
             summary_text=summary_text,
             screenshot_path=screenshot_path,
             pdf_path=pdf_path_str,
+            abstract_image_path=abstract_image_path,
         )
 
     # ── 指令处理 ──────────────────────────────────────────────
@@ -343,6 +388,7 @@ class ArxivPlugin(Star):
             return
 
         query = query.strip()
+        logger.info("收到搜索请求: '%s'", query)
 
         max_results = self._arxiv_cfg.get("max_results", 5)
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
@@ -354,9 +400,11 @@ class ArxivPlugin(Star):
                 timeout=timeout,
             )
         except Exception:
-            logger.exception("ArXiv 搜索失败。")
+            logger.exception("ArXiv 搜索 '%s' 失败。", query)
             yield event.plain_result("❌ 搜索失败，请稍后重试。")
             return
+
+        logger.info("搜索 '%s' 返回 %d 篇论文。", query, len(papers))
 
         if not papers:
             yield event.plain_result("📭 未找到匹配的论文。")
@@ -371,14 +419,11 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            mer = MessageEventResult()
-            mer.chain = msg.chain
-            yield mer
+            yield self._make_result(msg)
         else:
             for chain in chains:
-                mer = MessageEventResult()
-                mer.chain = chain.chain
-                yield mer
+                yield self._make_result(chain)
+        logger.info("搜索 '%s' 结果已发送。", query)
 
     @arxiv_group.command("latest")
     async def cmd_latest(self, event: AstrMessageEvent):
@@ -387,6 +432,8 @@ class ArxivPlugin(Star):
         tags = self._arxiv_cfg.get("tags", [])
         max_results = self._arxiv_cfg.get("max_results", 5)
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
+
+        logger.info("收到 latest 请求，分类: %s", categories)
 
         try:
             papers = await arxiv_client.get_latest_papers(
@@ -399,6 +446,8 @@ class ArxivPlugin(Star):
             logger.exception("ArXiv 获取最新论文失败。")
             yield event.plain_result("❌ 获取最新论文失败，请稍后重试。")
             return
+
+        logger.info("latest 返回 %d 篇论文。", len(papers))
 
         if not papers:
             yield event.plain_result("📭 当前分类下没有找到论文。")
@@ -413,22 +462,17 @@ class ArxivPlugin(Star):
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
             msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            mer = MessageEventResult()
-            mer.chain = msg.chain
-            yield mer
+            yield self._make_result(msg)
         else:
             for chain in chains:
-                mer = MessageEventResult()
-                mer.chain = chain.chain
-                yield mer
+                yield self._make_result(chain)
+        logger.info("latest 结果已发送。")
 
     @arxiv_group.command("categories")
     async def cmd_categories(self, event: AstrMessageEvent):
         """列出所有支持的 arXiv 学科分类。"""
         msg = formatter.build_categories_chain()
-        mer = MessageEventResult()
-        mer.chain = msg.chain
-        yield mer
+        yield self._make_result(msg)
 
     @arxiv_group.command("status")
     async def cmd_status(self, event: AstrMessageEvent):
