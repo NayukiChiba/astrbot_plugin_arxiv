@@ -8,7 +8,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 - **关键词标签** — 支持自定义关键词标签进行模糊匹配
 - **论文搜索** — `/arxiv search <关键词>` 搜索论文
 - **最新论文** — `/arxiv latest` 获取配置分类下的最新论文
-- **定时推送** — 通过 cron 表达式定时推送（默认每天 9:00 上海时间）
+- **定时推送** — 每日定时推送（默认每天 09:00 上海时间）
 - **目标会话** — 支持 UMO 会话列表，可通过指令快捷添加/移除
 - **发送模式** — 支持合并转发和逐条发送两种模式
 - **PDF 附件** — 可选附带 PDF 文件
@@ -31,31 +31,43 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | `/arxiv remove_session` | 将当前会话从推送目标中移除 |
 | `/arxiv push_now` | 立即向当前会话推送最新论文（去重） |
 
-## 配置项
+## 配置说明
 
-所有配置项都可以在 AstrBot WebUI 的插件管理面板中修改：
+所有配置项都可以在 AstrBot WebUI 的插件管理面板中修改，分为三大组：
+
+### ArXiv 论文配置
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | categories | list | `["cs.AI"]` | arXiv 学科分类代码列表 |
-| tags | list | `[]` | 关键词标签 |
+| tags | list | `[]` | 关键词标签（模糊匹配） |
 | max_results | int | `5` | 每次推送的最大论文数 |
-| cron_expression | str | `"0 9 * * *"` | 定时表达式 |
-| cron_timezone | str | `"Asia/Shanghai"` | 时区 |
+| timeout_seconds | int | `30` | HTTP 请求超时 (秒) |
+
+### 发送配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| push_time | string | `"09:00"` | 每日推送时间（HH:MM） |
+| push_timezone | string | `"Asia/Shanghai"` | 时区 |
 | target_sessions | list | `[]` | 目标 UMO 会话列表 |
-| send_mode | str | `"forward"` | `forward` 或 `individual` |
+| use_forward | bool | `true` | 是否使用合并转发 |
+| bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人名称 |
+| send_abstract | bool | `true` | 是否发送摘要 |
 | attach_pdf | bool | `false` | 是否附带 PDF 文件 |
 | screenshot_pdf | bool | `true` | 是否截图 PDF 首页 |
 | screenshot_dpi | int | `150` | 截图 DPI（72~300） |
 | max_pdf_size_mb | int | `20` | PDF 最大体积限制 (MB) |
-| timeout_seconds | int | `30` | HTTP 请求超时 (秒) |
-| send_abstract | bool | `true` | 是否发送摘要 |
-| abstract_mode | str | `"original"` | `original` 或 `llm_chinese` |
-| llm_summarize | bool | `false` | 是否使用 LLM 总结论文 |
-| llm_provider_id | str | `""` | LLM 提供商 ID |
-| llm_summary_prompt | str | `""` | 自定义 LLM 总结 prompt |
-| bot_name | str | `"ArXiv Bot"` | 合并转发中的机器人名称 |
 | history_retention_days | int | `30` | 已发送记录保留天数 |
+
+### LLM 赋能配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| abstract_mode | string | `"original"` | `original` 或 `llm_chinese` |
+| llm_summarize | bool | `false` | 是否使用 LLM 总结论文 |
+| llm_provider_id | string | `""` | LLM 提供商（WebUI 可视化选取） |
+| llm_summary_prompt | text | `""` | 自定义 LLM 总结 prompt |
 
 ## 依赖
 
