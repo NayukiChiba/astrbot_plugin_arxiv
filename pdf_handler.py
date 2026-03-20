@@ -6,12 +6,11 @@ PyMuPDF 为软依赖 —— 若未安装则相关功能优雅降级。
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import aiohttp
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 # 尝试导入 pymupdf，未安装则标记为不可用
 try:

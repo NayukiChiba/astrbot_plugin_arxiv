@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from astrbot.api import logger
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
 
-logger = logging.getLogger("astrbot")
 
 # 默认论文总结 prompt
 DEFAULT_SUMMARY_PROMPT = (

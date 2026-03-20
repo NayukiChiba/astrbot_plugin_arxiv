@@ -5,13 +5,12 @@ Uses Pillow to render the abstract text into a clean, readable long image.
 
 from __future__ import annotations
 
-import logging
 import textwrap
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 # Rendering settings
 _WIDTH = 800

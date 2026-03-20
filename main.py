@@ -5,20 +5,16 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
-from astrbot.api import AstrBotConfig
-from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.event import filter as event_filter
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
 
 from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
 from .history import SentHistory
-
-logger = logging.getLogger("astrbot")
 
 # 默认 LLM 总结 prompt
 _DEFAULT_SUMMARY_PROMPT = (
@@ -359,7 +355,7 @@ class ArxivPlugin(Star):
 
     # ── 指令处理 ──────────────────────────────────────────────
 
-    @event_filter.command_group("arxiv")
+    @filter.command_group("arxiv")
     def arxiv_group(self):
         """ArXiv 论文相关指令组。"""
 
