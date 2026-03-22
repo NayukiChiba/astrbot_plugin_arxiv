@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.1 (2026-03-22)
+
+### 新功能
+
+- **论文精确获取** — 新增 `/arxiv get <arxiv_id>` 指令，通过 arXiv ID（如 `2501.12345`）直接获取单篇论文的完整内容，包含摘要、PDF 截图及 LLM 总结
+
+### 改进
+
+- **搜索结果轻量化** — `/arxiv search` 不再下载 PDF，仅返回论文标题、作者、摘要、链接等基本信息，并在每条结果末尾提示使用 `get` 指令获取完整内容，大幅加快搜索响应速度
+- **搜索数量可控** — `/arxiv search` 支持在关键词末尾附加数量参数（1~20），如 `/arxiv search diffusion model 3`，不填则使用配置中的默认值
+
+### 修复
+
+- 将各模块中违规使用的 `import logging` / `logging.getLogger("astrbot")` 全部替换为框架提供的 `from astrbot.api import logger`
+- 移除 `main.py` 中 `event_filter` 别名，改为直接从 `astrbot.api.event` 导入 `filter`
+
 ## v1.0.0 (2026-03-20)
 
 首个正式版本发布。

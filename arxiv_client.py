@@ -155,6 +155,42 @@ def _parse_feed_entry(entry: dict) -> ArxivPaper:
     )
 
 
+async def get_paper_by_id(
+    arxiv_id: str,
+    *,
+    timeout: int = 30,
+) -> ArxivPaper | None:
+    """通过 arXiv ID 获取单篇论文。
+
+    Args:
+        arxiv_id: arXiv 论文 ID，如 ``2501.12345`` 或 ``cs/0601001``。
+        timeout: HTTP 请求超时秒数。
+
+    Returns:
+        ArxivPaper 对象，未找到时返回 None。
+    """
+    params = {
+        "id_list": arxiv_id,
+        "max_results": 1,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            ARXIV_API_URL,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+            text = await resp.text()
+
+    await asyncio.sleep(_API_DELAY_SECONDS)
+
+    feed = feedparser.parse(text)
+    if not feed.entries:
+        return None
+    return _parse_feed_entry(feed.entries[0])
+
+
 async def search_papers(
     query: str,
     *,

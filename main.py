@@ -9,6 +9,7 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
@@ -44,7 +45,7 @@ def _time_to_cron(time_str: str) -> str:
     "astrbot_plugin_arxiv",
     "NayukiChiba",
     "ArXiv 论文搜索与定时推送插件",
-    "1.0.0",
+    "1.0.1",
 )
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
@@ -367,7 +368,8 @@ class ArxivPlugin(Star):
             "",
             "可用指令：",
             "  /arxiv help — 显示本帮助信息",
-            "  /arxiv search <关键词> — 搜索论文",
+            "  /arxiv search <关键词> [数量] — 搜索论文（仅显示摘要信息，数量默认取配置值）",
+            "  /arxiv get <arxiv_id> — 获取指定论文完整内容（含 PDF/截图）",
             "  /arxiv latest — 获取最新论文（按配置的分类）",
             "  /arxiv categories — 列出所有支持的学科分类",
             "  /arxiv status — 查看插件当前配置和状态",
@@ -380,17 +382,28 @@ class ArxivPlugin(Star):
     async def cmd_search(
         self, event: AstrMessageEvent, query: GreedyStr = GreedyStr("")
     ):
-        """搜索 arXiv 论文。用法: /arxiv search <关键词>"""
+        """搜索 arXiv 论文（仅显示信息，不下载 PDF）。用法: /arxiv search <关键词> [数量]"""
         if not query.strip():
             yield event.plain_result(
-                "❌ 请提供搜索关键词。用法: /arxiv search <关键词>"
+                "❌ 请提供搜索关键词。用法: /arxiv search <关键词> [数量]\n"
+                "例如: /arxiv search attention mechanism 3"
             )
             return
 
         query = query.strip()
-        logger.info("收到搜索请求: '%s'", query)
 
-        max_results = self._arxiv_cfg.get("max_results", 5)
+        # 从末尾解析可选的结果数量参数，如 "attention mechanism 3"
+        default_max = self._arxiv_cfg.get("max_results", 5)
+        max_results = default_max
+        parts = query.rsplit(maxsplit=1)
+        if len(parts) == 2 and parts[-1].isdigit():
+            num = int(parts[-1])
+            if 1 <= num <= 20:
+                max_results = num
+                query = parts[0]
+
+        logger.info("收到搜索请求: '%s'，数量: %d", query, max_results)
+
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
         try:
@@ -410,7 +423,67 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 未找到匹配的论文。")
             return
 
-        chains = await self._process_papers(papers)
+        # search 只推信息，不走 PDF 流程
+        chains = []
+        for i, paper in enumerate(papers, 1):
+            chain = MessageChain()
+            text = formatter.format_paper_text(
+                paper,
+                index=i,
+                show_abstract=self._send_cfg.get("send_abstract", True),
+                abstract_text=paper.abstract,
+            )
+            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
+            chain.chain.append(Plain(text))
+            chains.append(chain)
+
+        use_forward = self._send_cfg.get("use_forward", True)
+        if use_forward:
+            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+            msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
+            yield self._make_result(msg)
+        else:
+            for chain in chains:
+                yield self._make_result(chain)
+        logger.info("搜索 '%s' 结果已发送。", query)
+
+    @arxiv_group.command("get")
+    async def cmd_get(
+        self, event: AstrMessageEvent, arxiv_id: GreedyStr = GreedyStr("")
+    ):
+        """通过 arXiv ID 获取单篇论文完整内容（含 PDF/截图/摘要）。
+
+        用法: /arxiv get 2501.12345
+        """
+        arxiv_id = arxiv_id.strip()
+        if not arxiv_id:
+            yield event.plain_result(
+                "❌ 请提供论文 ID。用法: /arxiv get <arxiv_id>\n"
+                "例如: /arxiv get 2501.12345"
+            )
+            return
+
+        logger.info("收到 get 请求: '%s'", arxiv_id)
+        timeout = self._arxiv_cfg.get("timeout_seconds", 30)
+
+        yield event.plain_result(f"🔍 正在获取论文 {arxiv_id}，请稍候...")
+
+        try:
+            paper = await arxiv_client.get_paper_by_id(arxiv_id, timeout=timeout)
+        except Exception:
+            logger.exception("获取论文 '%s' 失败。", arxiv_id)
+            yield event.plain_result("❌ 获取论文失败，请检查 ID 是否正确后重试。")
+            return
+
+        if paper is None:
+            yield event.plain_result(
+                f"📭 未找到 ID 为 {arxiv_id} 的论文，请确认 ID 是否正确。"
+            )
+            return
+
+        logger.info("获取论文成功: %s", paper.title)
+
+        chains = await self._process_papers([paper])
         if not chains:
             yield event.plain_result("📭 处理论文时出错。")
             return
@@ -423,7 +496,7 @@ class ArxivPlugin(Star):
         else:
             for chain in chains:
                 yield self._make_result(chain)
-        logger.info("搜索 '%s' 结果已发送。", query)
+        logger.info("论文 '%s' 已发送。", arxiv_id)
 
     @arxiv_group.command("latest")
     async def cmd_latest(self, event: AstrMessageEvent):
