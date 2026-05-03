@@ -49,6 +49,7 @@ class ArxivPlugin(Star):
         self._temp_dir: Path = Path()
         self._history: SentHistory | None = None
         self._cron_job_id: str = ""
+        self._bestMirror: str = ""
 
     # ── 便捷配置访问 ──────────────────────────────────────────
 
@@ -70,7 +71,7 @@ class ArxivPlugin(Star):
     # ── 生命周期 ──────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """插件初始化：加载历史、设置定时任务。"""
+        """插件初始化：加载历史、设置定时任务、测速选择最优镜像。"""
         # 初始化数据目录
         self._data_dir = StarTools.get_data_dir("astrbot_plugin_arxiv")
         self._temp_dir = self._data_dir / "temp"
@@ -84,6 +85,11 @@ class ArxivPlugin(Star):
         removed = self._history.cleanup_old()
         if removed > 0:
             logger.info("已清理 %d 条过期的论文发送记录。", removed)
+
+        # 测速选择最优 PDF 镜像站
+        mirrors = self._arxiv_cfg.get("pdf_mirrors", ["https://arxiv.org"])
+        logger.info("正在测速 %d 个 PDF 镜像站...", len(mirrors))
+        self._bestMirror = await pdf_handler.pickBestMirror(mirrors)
 
         # 注册定时任务
         await self._register_cron_job()
@@ -276,6 +282,7 @@ class ArxivPlugin(Star):
                     self._temp_dir,
                     timeout=timeout,
                     max_size_mb=max_pdf_size,
+                    best_mirror=self._bestMirror,
                 )
             except pdf_handler.PdfSizeExceededError as e:
                 logger.warning("[%s] %s", paper.arxiv_id, e)

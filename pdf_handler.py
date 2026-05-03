@@ -2,8 +2,6 @@
 
 使用 aiohttp 进行异步下载，pymupdf (fitz) 进行 PDF 处理。
 PyMuPDF 为软依赖 —— 若未安装则相关功能优雅降级。
-
-PDF 下载前自动测速多个镜像站，选择最快的节点。
 """
 
 from __future__ import annotations
@@ -15,14 +13,6 @@ from pathlib import Path
 import aiohttp
 
 from astrbot.api import logger
-
-# arXiv PDF 镜像站列表（国内镜像优先，官方站兜底）
-_MIRROR_LIST = [
-    "https://cn.arxiv.org",
-    "https://arxiv.xixiaoyao.cn",
-    "https://arxiv.org",
-]
-_MIRROR_PING_TIMEOUT = 5  # 镜像测速超时（秒）
 
 # 尝试导入 pymupdf，未安装则标记为不可用
 try:
@@ -48,15 +38,14 @@ class PdfSizeExceededError(Exception):
         )
 
 
+_MIRROR_PING_TIMEOUT = 5  # 镜像测速超时（秒）
+
+
 async def _pingMirror(
     session: aiohttp.ClientSession,
     url: str,
 ) -> tuple[str, float] | None:
-    """对单个镜像发起 HEAD 请求并计时。
-
-    Returns:
-        (url, elapsed_seconds)，失败返回 None。
-    """
+    """对单个镜像发起 HEAD 请求并计时。"""
     try:
         start = time.monotonic()
         async with session.head(
@@ -72,39 +61,23 @@ async def _pingMirror(
     return None
 
 
-async def selectFastestMirror(pdf_url: str) -> str:
-    """并发测速所有 arXiv PDF 镜像站，返回最快的下载链接。
-
-    从原始 URL 中提取 PDF 路径（如 /pdf/2401.14554v4.pdf），
-    对各镜像并发 HEAD 请求，选择响应最快的节点。
-    全部失败则回退到原始 URL。
+async def pickBestMirror(mirrors: list[str]) -> str:
+    """启动时并发 ping 所有镜像站，返回响应最快的那个。
 
     Args:
-        pdf_url: 原始 PDF 链接（用于提取路径和回退）。
+        mirrors: 镜像站 URL 列表，如 ``["https://arxiv.org", "https://cn.arxiv.org"]``。
 
     Returns:
-        最快镜像的 PDF URL。
+        最快的镜像站 URL。全部不可达时返回列表第一个。
     """
-    # 从原始 URL 提取路径
-    path = ""
-    for mirror in _MIRROR_LIST:
-        if mirror in pdf_url:
-            path = pdf_url.split(mirror, 1)[-1]
-            break
-    if not path and "/pdf/" in pdf_url:
-        path = pdf_url.split("/pdf/", 1)[-1]
-        path = f"/pdf/{path}"
+    if not mirrors:
+        return "https://arxiv.org"
 
-    if not path:
-        logger.warning("无法从 URL 提取路径，使用原始 URL: %s", pdf_url)
-        return pdf_url
-
-    test_urls = [f"{mirror}{path}" for mirror in _MIRROR_LIST]
     headers = {"User-Agent": "astrbot-arxiv-plugin/1.0"}
-
     results: dict[str, float] = {}
+
     async with aiohttp.ClientSession(headers=headers) as session:
-        tasks = [_pingMirror(session, url) for url in test_urls]
+        tasks = [_pingMirror(session, url) for url in mirrors]
         gathered = await asyncio.gather(*tasks)
         for result in gathered:
             if result is not None:
@@ -112,20 +85,35 @@ async def selectFastestMirror(pdf_url: str) -> str:
                 results[url] = elapsed
 
     if results:
-        # 按镜像列表优先级选择（国内镜像优先），而非按延迟
-        for url in test_urls:
-            if url in results:
-                logger.info(
-                    "选择镜像: %s (%.2fs)，%d/%d 个镜像可达",
-                    url,
-                    results[url],
-                    len(results),
-                    len(test_urls),
-                )
-                return url
+        # 按响应时间排序，选最快的
+        best = min(results, key=lambda k: results[k])
+        logger.info(
+            "最佳镜像: %s (%.2fs)，%d/%d 可达",
+            best,
+            results[best],
+            len(results),
+            len(mirrors),
+        )
+        return best
 
-    logger.warning("所有镜像测速失败，回退到原始 URL: %s", pdf_url)
-    return pdf_url
+    logger.warning("所有镜像测速失败，回退到: %s", mirrors[0])
+    return mirrors[0]
+
+
+def resolvePdfUrl(original_url: str, mirror_base: str) -> str:
+    """用指定镜像站替换 PDF URL 的域名部分。
+
+    Args:
+        original_url: 原始 PDF 链接，如 ``https://arxiv.org/pdf/2401.14554v4.pdf``。
+        mirror_base: 镜像站基 URL，如 ``https://cn.arxiv.org``。
+
+    Returns:
+        替换后的 PDF URL。
+    """
+    if not mirror_base:
+        return original_url
+    path = original_url.split("/pdf/", 1)[-1]
+    return f"{mirror_base.rstrip('/')}/pdf/{path}"
 
 
 async def download_pdf(
@@ -134,6 +122,7 @@ async def download_pdf(
     *,
     timeout: int = 30,
     max_size_mb: int = 20,
+    best_mirror: str = "",
 ) -> Path | None:
     """下载 PDF 文件，支持体积限制。
 
@@ -142,6 +131,7 @@ async def download_pdf(
         save_dir: 保存目录。
         timeout: HTTP 超时秒数。
         max_size_mb: 最大允许文件大小（MB）。
+        best_mirror: 预选的最快镜像站基 URL，传入时替换原始 URL 的域名。
 
     Returns:
         下载成功返回文件路径，失败返回 None。
@@ -149,8 +139,9 @@ async def download_pdf(
     Raises:
         PdfSizeExceededError: PDF 文件超出大小限制。
     """
-    # 选择最快镜像
-    url = await selectFastestMirror(url)
+    if best_mirror:
+        url = resolvePdfUrl(url, best_mirror)
+        logger.info("使用镜像下载: %s", url)
 
     max_bytes = max_size_mb * 1024 * 1024
     save_dir.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,12 @@
         "type": "int",
         "default": 1
       },
+      "pdf_mirrors": {
+        "description": "PDF 下载镜像站",
+        "type": "list",
+        "hint": "arXiv PDF 下载镜像站列表。启动时自动测速，选择最快的节点。按优先级排列，也可手动排序。",
+        "default": ["https://arxiv.org", "https://cn.arxiv.org"]
+      },
       "timeout_seconds": {
         "description": "HTTP 请求超时 (秒)",
         "type": "int",
