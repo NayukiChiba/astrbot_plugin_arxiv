@@ -5,7 +5,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 ## 功能特性
 
 - **论文搜索** — `/arxiv search <关键词> [数量]` 快速搜索论文，仅返回基本信息，不下载 PDF
-- **精确获取** — `/arxiv get <arxiv_id>` 通过 ID 获取单篇论文完整内容（摘要、PDF 截图、LLM 总结）
+- **精确获取** — `/arxiv get <arxiv_id|url>` 通过 ID 或链接获取单篇论文完整内容（摘要、PDF 截图、LLM 总结）
 - **最新论文** — `/arxiv latest` 获取配置分类下的最新论文（含完整内容）
 - **定时推送** — 每日定时推送，自动去重已发送论文
 - **学科分类筛选** — 支持选择 arXiv 学科分类（cs.AI、cs.LG、math.CO 等）
@@ -24,7 +24,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 |------|------|
 | `/arxiv help` | 显示帮助信息 |
 | `/arxiv search <关键词> [数量]` | 搜索 arXiv 论文（仅显示信息，数量可选，默认取配置值，最多 20） |
-| `/arxiv get <arxiv_id>` | 通过 arXiv ID 获取单篇论文完整内容（含 PDF 截图/LLM 总结） |
+| `/arxiv get <arxiv_id|url>` | 通过 arXiv ID 或链接获取单篇论文完整内容（含 PDF 截图/LLM 总结） |
 | `/arxiv latest` | 获取已配置分类的最新论文 |
 | `/arxiv categories` | 列出所有支持的学科分类 |
 | `/arxiv status` | 查看插件配置和状态 |
@@ -47,6 +47,15 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 /arxiv latest
 ```
 
+## PDF 镜像站
+
+插件在启动时并发测速所有配置的镜像站，自动选择最快的节点下载 PDF。默认使用官方站和中科院镜像：
+
+- `https://arxiv.org` — arXiv 官方
+- `https://cn.arxiv.org` — 中科院镜像（国内推荐）
+
+可在 WebUI 的 `pdf_mirrors` 配置项中自定义镜像列表。下载失败时会在消息中显示跳过原因（超限/网络错误）。
+
 ## 配置说明
 
 所有配置项都可以在 AstrBot WebUI 的插件管理面板中修改，分为三大组：
@@ -58,6 +67,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | categories | list | `["cs.AI"]` | arXiv 学科分类代码列表 |
 | tags | list | `[]` | 关键词标签（模糊匹配） |
 | max_results | int | `1` | 每次推送/搜索的默认最大论文数 |
+| pdf_mirrors | list | `["https://arxiv.org", "https://cn.arxiv.org"]` | PDF 下载镜像站列表，启动时自动测速选最快 |
 | timeout_seconds | int | `30` | HTTP 请求超时 (秒) |
 
 ### 发送配置

@@ -1,7 +1,7 @@
 name: astrbot_plugin_arxiv
 display_name: ArXiv Paper Pusher
 desc: ArXiv 论文搜索与定时推送，支持 LLM 摘要翻译、PDF 处理、合并转发等。
-version: v1.0.1
+version: v1.0.2
 author: NayukiChiba
 repo: https://github.com/NayukiChiba/astrbot_plugin_arxiv
 astrbot_version: ">=4.16"
