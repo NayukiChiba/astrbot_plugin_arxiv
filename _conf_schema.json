@@ -117,17 +117,24 @@
         "hint": "启用后将提取 PDF 文本并调用 LLM 生成中文总结。需要配置下方的 LLM 提供商。",
         "default": false
       },
-      "llm_provider_id": {
-        "description": "LLM 提供商（留空则使用当前对话的默认 LLM）",
+      "translate_provider_id": {
+        "description": "摘要翻译 LLM 提供商（留空使用默认）",
         "type": "string",
         "_special": "select_provider",
-        "hint": "用于摘要翻译和论文总结的 LLM 提供商。留空将自动使用当前对话的默认 LLM 提供商。",
+        "hint": "用于摘要翻译的 LLM 提供商，可使用小模型以节省成本。留空自动使用当前对话的默认提供商。",
+        "default": ""
+      },
+      "summarize_provider_id": {
+        "description": "论文总结 LLM 提供商（需多模态视觉模型，留空使用默认）",
+        "type": "string",
+        "_special": "select_provider",
+        "hint": "用于 PDF 截图总结的 LLM 提供商，需支持视觉输入（如 GPT-4o、Claude 等）。留空自动使用当前对话的默认提供商。",
         "default": ""
       },
       "llm_summary_prompt": {
         "description": "自定义总结 Prompt",
         "type": "text",
-        "hint": "自定义 LLM 总结 prompt，需包含 {content} 占位符。留空使用默认 prompt。",
+        "hint": "自定义视觉模型总结 prompt。留空使用默认 prompt。",
         "default": ""
       }
     }

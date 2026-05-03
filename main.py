@@ -9,7 +9,7 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
@@ -17,15 +17,6 @@ from astrbot.core.star.filter.command import GreedyStr
 from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
 from .arxiv_client import extractArxivId
 from .history import SentHistory
-
-# 默认 LLM 总结 prompt
-_DEFAULT_SUMMARY_PROMPT = (
-    "你是一个学术论文总结助手。请用中文总结以下论文内容。"
-    "重点关注: 1) 主要贡献 2) 核心方法 3) 关键结果和结论。"
-    "总结应简洁专业，不超过 300 字。\n\n"
-    "论文内容:\n{content}"
-)
-
 
 def _time_to_cron(time_str: str) -> str:
     """将 HH:MM 格式的时间字符串转换为 cron 表达式。
@@ -257,7 +248,7 @@ class ArxivPlugin(Star):
         if self._send_cfg.get("send_abstract", True):
             abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
-                provider_id = self._llm_cfg.get("llm_provider_id", "")
+                provider_id = self._llm_cfg.get("translate_provider_id", "")
                 logger.info("[%s] 使用 LLM 翻译摘要...", paper.arxiv_id)
                 abstract_text = await llm_service.translate_abstract(
                     self.context,
@@ -289,8 +280,12 @@ class ArxivPlugin(Star):
             else:
                 logger.warning("[%s] PDF 下载失败。", paper.arxiv_id)
 
-        # PDF 首页截图
-        if downloaded_pdf and self._send_cfg.get("screenshot_pdf", True):
+        # PDF 首页截图（screenshot_pdf 或 LLM 总结开启时需要）
+        need_screenshot = (
+            self._send_cfg.get("screenshot_pdf", True)
+            or self._llm_cfg.get("llm_summarize", False)
+        )
+        if downloaded_pdf and need_screenshot:
             dpi = self._send_cfg.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
                 downloaded_pdf,
@@ -303,21 +298,28 @@ class ArxivPlugin(Star):
             else:
                 logger.warning("[%s] PDF 首页截图失败。", paper.arxiv_id)
 
-        # LLM 总结
+        # LLM 总结（优先使用视觉模型 + PDF 截图）
         if downloaded_pdf and self._llm_cfg.get("llm_summarize", False):
-            pdf_text = pdf_handler.extract_text(downloaded_pdf)
-            if pdf_text:
-                provider_id = self._llm_cfg.get("llm_provider_id", "")
-                custom_prompt = (
-                    self._llm_cfg.get("llm_summary_prompt", "")
-                    or _DEFAULT_SUMMARY_PROMPT
-                )
-                summary_text = await llm_service.summarize_paper(
+            provider_id = self._llm_cfg.get("summarize_provider_id", "")
+            custom_prompt = self._llm_cfg.get("llm_summary_prompt", "")
+
+            if screenshot_path:
+                summary_text = await llm_service.summarize_paper_vision(
                     self.context,
-                    pdf_text,
+                    screenshot_path,
                     provider_id=provider_id,
                     custom_prompt=custom_prompt,
                 )
+            else:
+                # 截图失败时回退文本模式
+                pdf_text = pdf_handler.extract_text(downloaded_pdf)
+                if pdf_text:
+                    summary_text = await llm_service.summarize_paper(
+                        self.context,
+                        pdf_text,
+                        provider_id=provider_id,
+                        custom_prompt=custom_prompt,
+                    )
 
         # 摘要渲染为图片（或文本）
         abstract_image_path = ""
@@ -354,6 +356,67 @@ class ArxivPlugin(Star):
             pdf_path=pdf_path_str,
             abstract_image_path=abstract_image_path,
         )
+
+    async def _build_info_chains(
+        self,
+        papers: list[arxiv_client.ArxivPaper],
+    ) -> list[MessageChain]:
+        """为 search/latest 构建消息链列表，支持摘要渲染为图片和 LLM 翻译。
+
+        每条论文生成 1~2 条消息：
+        1. 基本信息（标题、作者、链接等）
+        2. 摘要图片（如果 abstract_as_image 开启）
+        """
+        chains: list[MessageChain] = []
+        send_abstract = self._send_cfg.get("send_abstract", True)
+        abstract_as_image = self._send_cfg.get("abstract_as_image", True)
+        # LLM 翻译
+        abstract_mode = self._llm_cfg.get("abstract_mode", "original")
+
+        for i, paper in enumerate(papers, 1):
+            # 摘要文本（可能经过 LLM 翻译）
+            abstract_text = paper.abstract
+            if abstract_mode == "llm_chinese" and paper.abstract:
+                provider_id = self._llm_cfg.get("translate_provider_id", "")
+                abstract_text = await llm_service.translate_abstract(
+                    self.context,
+                    paper.abstract,
+                    provider_id=provider_id,
+                )
+
+            # 基本信息（摘要是否内嵌取决于是否以图片形式发送）
+            show_in_text = send_abstract and not abstract_as_image
+            info_chain = MessageChain()
+            text = formatter.format_paper_text(
+                paper,
+                index=i,
+                show_abstract=show_in_text,
+                abstract_text=abstract_text,
+            )
+            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
+            info_chain.chain.append(Plain(text))
+            chains.append(info_chain)
+
+            # 摘要渲染为图片
+            if send_abstract and abstract_as_image and abstract_text:
+                img_name = f"abstract_{paper.arxiv_id.replace('/', '_')}.png"
+                img_path = self._temp_dir / img_name
+                rendered = text_render.render_abstract_image(
+                    abstract_text, img_path,
+                )
+                if rendered:
+                    img_chain = MessageChain()
+                    img_chain.chain.append(Image.fromFileSystem(str(rendered)))
+                    chains.append(img_chain)
+                else:
+                    # 渲染失败时回退为文本
+                    fallback_chain = MessageChain()
+                    fallback_chain.chain.append(
+                        Plain(f"📝 摘要:\n{paper.abstract}")
+                    )
+                    chains.append(fallback_chain)
+
+        return chains
 
     # ── 指令处理 ──────────────────────────────────────────────
 
@@ -429,18 +492,7 @@ class ArxivPlugin(Star):
             return
 
         # search 只推信息，不走 PDF 流程
-        chains = []
-        for i, paper in enumerate(papers, 1):
-            chain = MessageChain()
-            text = formatter.format_paper_text(
-                paper,
-                index=i,
-                show_abstract=self._send_cfg.get("send_abstract", True),
-                abstract_text=paper.abstract,
-            )
-            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
-            chain.chain.append(Plain(text))
-            chains.append(chain)
+        chains = await self._build_info_chains(papers)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
@@ -544,18 +596,7 @@ class ArxivPlugin(Star):
             return
 
         # latest 只展示论文信息，不下载 PDF（PDF 仅通过 /arxiv get 获取）
-        chains = []
-        for i, paper in enumerate(papers, 1):
-            chain = MessageChain()
-            text = formatter.format_paper_text(
-                paper,
-                index=i,
-                show_abstract=self._send_cfg.get("send_abstract", True),
-                abstract_text=paper.abstract,
-            )
-            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
-            chain.chain.append(Plain(text))
-            chains.append(chain)
+        chains = await self._build_info_chains(papers)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
