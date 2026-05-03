@@ -15,6 +15,7 @@ from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
 
 from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
+from .arxiv_client import extractArxivId
 from .history import SentHistory
 
 # 默认 LLM 总结 prompt
@@ -369,7 +370,7 @@ class ArxivPlugin(Star):
             "可用指令：",
             "  /arxiv help — 显示本帮助信息",
             "  /arxiv search <关键词> [数量] — 搜索论文（仅显示摘要信息，数量默认取配置值）",
-            "  /arxiv get <arxiv_id> — 获取指定论文完整内容（含 PDF/截图）",
+            "  /arxiv get <arxiv_id|url> — 获取指定论文完整内容（含 PDF/截图），支持 ID 或链接",
             "  /arxiv latest — 获取最新论文（按配置的分类）",
             "  /arxiv categories — 列出所有支持的学科分类",
             "  /arxiv status — 查看插件当前配置和状态",
@@ -412,6 +413,10 @@ class ArxivPlugin(Star):
                 max_results=max_results,
                 timeout=timeout,
             )
+        except TimeoutError:
+            logger.exception("ArXiv 搜索 '%s' 超时。", query)
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("ArXiv 搜索 '%s' 失败。", query)
             yield event.plain_result("❌ 搜索失败，请稍后重试。")
@@ -451,18 +456,22 @@ class ArxivPlugin(Star):
     async def cmd_get(
         self, event: AstrMessageEvent, arxiv_id: GreedyStr = GreedyStr("")
     ):
-        """通过 arXiv ID 获取单篇论文完整内容（含 PDF/截图/摘要）。
+        """通过 arXiv ID 或链接获取单篇论文完整内容（含 PDF/截图/摘要）。
 
         用法: /arxiv get 2501.12345
+              /arxiv get https://arxiv.org/abs/2501.12345
         """
         arxiv_id = arxiv_id.strip()
         if not arxiv_id:
             yield event.plain_result(
-                "❌ 请提供论文 ID。用法: /arxiv get <arxiv_id>\n"
-                "例如: /arxiv get 2501.12345"
+                "❌ 请提供论文 ID 或链接。用法: /arxiv get <arxiv_id|url>\n"
+                "例如: /arxiv get 2501.12345\n"
+                "      /arxiv get https://arxiv.org/abs/2501.12345"
             )
             return
 
+        # 从用户输入中提取 arXiv ID（支持直接 ID 和 URL 两种形式）
+        arxiv_id = extractArxivId(arxiv_id)
         logger.info("收到 get 请求: '%s'", arxiv_id)
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
@@ -470,9 +479,13 @@ class ArxivPlugin(Star):
 
         try:
             paper = await arxiv_client.get_paper_by_id(arxiv_id, timeout=timeout)
+        except TimeoutError:
+            logger.exception("获取论文 '%s' 超时。", arxiv_id)
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("获取论文 '%s' 失败。", arxiv_id)
-            yield event.plain_result("❌ 获取论文失败，请检查 ID 是否正确后重试。")
+            yield event.plain_result("❌ 获取论文失败，请稍后重试。")
             return
 
         if paper is None:
@@ -515,6 +528,10 @@ class ArxivPlugin(Star):
                 max_results=max_results,
                 timeout=timeout,
             )
+        except TimeoutError:
+            logger.exception("ArXiv 获取最新论文超时。")
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("ArXiv 获取最新论文失败。")
             yield event.plain_result("❌ 获取最新论文失败，请稍后重试。")
@@ -526,10 +543,19 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 当前分类下没有找到论文。")
             return
 
-        chains = await self._process_papers(papers)
-        if not chains:
-            yield event.plain_result("📭 处理论文时出错。")
-            return
+        # latest 只展示论文信息，不下载 PDF（PDF 仅通过 /arxiv get 获取）
+        chains = []
+        for i, paper in enumerate(papers, 1):
+            chain = MessageChain()
+            text = formatter.format_paper_text(
+                paper,
+                index=i,
+                show_abstract=self._send_cfg.get("send_abstract", True),
+                abstract_text=paper.abstract,
+            )
+            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
+            chain.chain.append(Plain(text))
+            chains.append(chain)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
