@@ -13,7 +13,8 @@ from datetime import datetime
 import aiohttp
 import feedparser
 
-ARXIV_API_URL = "http://export.arxiv.org/api/query"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+_API_HEADERS = {"User-Agent": "astrbot-arxiv-plugin/1.0"}
 
 # arXiv API 请求间隔（遵守官方礼貌策略）
 _API_DELAY_SECONDS = 3.0
@@ -131,16 +132,16 @@ def _build_search_query(
         if len(cat_parts) == 1:
             parts.append(cat_parts[0])
         else:
-            parts.append("(" + "+OR+".join(cat_parts) + ")")
+            parts.append("(" + " OR ".join(cat_parts) + ")")
 
     if tags:
         tag_parts = [f"all:{tag}" for tag in tags]
         if len(tag_parts) == 1:
             parts.append(tag_parts[0])
         else:
-            parts.append("(" + "+OR+".join(tag_parts) + ")")
+            parts.append("(" + " OR ".join(tag_parts) + ")")
 
-    return "+AND+".join(parts) if parts else "all:*"
+    return " AND ".join(parts) if parts else "all:*"
 
 
 def _parse_feed_entry(entry: dict) -> ArxivPaper:
@@ -204,7 +205,7 @@ async def get_paper_by_id(
         "max_results": 1,
     }
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers=_API_HEADERS) as session:
         async with session.get(
             ARXIV_API_URL,
             params=params,
@@ -289,7 +290,7 @@ async def _fetch_papers(
         "sortOrder": "descending",
     }
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers=_API_HEADERS) as session:
         async with session.get(
             ARXIV_API_URL,
             params=params,

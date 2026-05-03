@@ -531,10 +531,19 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 当前分类下没有找到论文。")
             return
 
-        chains = await self._process_papers(papers)
-        if not chains:
-            yield event.plain_result("📭 处理论文时出错。")
-            return
+        # latest 只展示论文信息，不下载 PDF（PDF 仅通过 /arxiv get 获取）
+        chains = []
+        for i, paper in enumerate(papers, 1):
+            chain = MessageChain()
+            text = formatter.format_paper_text(
+                paper,
+                index=i,
+                show_abstract=self._send_cfg.get("send_abstract", True),
+                abstract_text=paper.abstract,
+            )
+            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
+            chain.chain.append(Plain(text))
+            chains.append(chain)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
