@@ -96,6 +96,7 @@ def build_paper_chains(
     screenshot_path: str = "",
     pdf_path: str = "",
     abstract_image_path: str = "",
+    extra_message: str = "",
 ) -> list[MessageChain]:
     """为单篇论文构建消息链列表。
 
@@ -112,6 +113,7 @@ def build_paper_chains(
         screenshot_path: PDF 首页截图的绝对路径。
         pdf_path: 要附带的 PDF 文件绝对路径。
         abstract_image_path: 摘要渲染图片的绝对路径。
+        extra_message: 额外消息（如跳过原因等），附加在链末尾。
 
     Returns:
         MessageChain 列表。
@@ -160,6 +162,12 @@ def build_paper_chains(
         summary_chain.chain.append(Plain(f"🤖 AI 总结:\n{summary_text}"))
         chains.append(summary_chain)
 
+    # 额外消息（如 PDF 跳过原因等）
+    if extra_message:
+        extra_chain = MessageChain()
+        extra_chain.chain.append(Plain(extra_message))
+        chains.append(extra_chain)
+
     return chains
 
 
@@ -170,6 +178,10 @@ def build_forward_nodes(
     bot_uin: str = "0",
 ) -> MessageChain:
     """将多篇论文的消息链包装为合并转发 Nodes。
+
+    Notes:
+        File 组件（PDF 附件）在合并转发消息中不被 NapCat 等平台支持
+        （仅含本地路径，缺少 url/file_id），会被自动过滤。
 
     Args:
         papers_chains: 每篇论文对应的 MessageChain 列表。
@@ -186,9 +198,14 @@ def build_forward_nodes(
     header_chain.chain.append(Plain(f"📚 ArXiv 论文推送 ({len(papers_chains)} 篇)"))
     nodes.append(Node(content=header_chain.chain, name=bot_name, uin=bot_uin))
 
-    # 每篇论文一个节点
+    # 每篇论文一个节点，过滤掉 File 组件
     for chain in papers_chains:
-        nodes.append(Node(content=chain.chain, name=bot_name, uin=bot_uin))
+        filtered = [
+            comp for comp in chain.chain if not isinstance(comp, File)
+        ]
+        if not filtered:
+            continue
+        nodes.append(Node(content=filtered, name=bot_name, uin=bot_uin))
 
     result = MessageChain()
     result.chain.append(Nodes(nodes=nodes))
