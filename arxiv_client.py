@@ -12,6 +12,7 @@ from datetime import datetime
 
 import aiohttp
 import feedparser
+from astrbot.api import logger
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 _API_HEADERS = {"User-Agent": "astrbot-arxiv-plugin/1.0"}
@@ -186,6 +187,70 @@ def _parse_feed_entry(entry: dict) -> ArxivPaper:
     )
 
 
+_MAX_RETRIES = 3
+
+
+async def _api_request(
+    url: str,
+    params: dict,
+    timeout: int,
+) -> str:
+    """发送 arXiv API 请求，自动重试 429 限流和网络错误。
+
+    Args:
+        url: 请求 URL。
+        params: 查询参数字典。
+        timeout: 超时秒数。
+
+    Returns:
+        API 响应文本。
+
+    Raises:
+        aiohttp.ClientResponseError: 非 429 的 HTTP 错误。
+        TimeoutError: 请求超时（所有重试耗尽后）。
+    """
+    for attempt in range(_MAX_RETRIES):
+        try:
+            async with aiohttp.ClientSession(headers=_API_HEADERS) as session:
+                async with session.get(
+                    url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status == 429:
+                        if attempt < _MAX_RETRIES - 1:
+                            retry_after = resp.headers.get("Retry-After", "5")
+                            wait = int(retry_after) if retry_after.isdigit() else 5
+                            logger.warning(
+                                "arXiv API 返回 429 (限流)，%d 秒后重试 (第 %d/%d 次)...",
+                                wait,
+                                attempt + 1,
+                                _MAX_RETRIES,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        # 最后一次重试也返回 429，不再重试
+                        resp.raise_for_status()
+                    resp.raise_for_status()
+                    return await resp.text()
+        except (TimeoutError, aiohttp.ClientError) as e:
+            if attempt < _MAX_RETRIES - 1:
+                wait = (attempt + 1) * 3
+                logger.warning(
+                    "arXiv API 请求失败: %s，%d 秒后重试 (第 %d/%d 次)...",
+                    e,
+                    wait,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+    # 理论上不会走到这里
+    raise RuntimeError("arXiv API 请求失败: 超过最大重试次数")
+
+
 async def get_paper_by_id(
     arxiv_id: str,
     *,
@@ -205,15 +270,7 @@ async def get_paper_by_id(
         "max_results": 1,
     }
 
-    async with aiohttp.ClientSession(headers=_API_HEADERS) as session:
-        async with session.get(
-            ARXIV_API_URL,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
-            resp.raise_for_status()
-            text = await resp.text()
-
+    text = await _api_request(ARXIV_API_URL, params, timeout)
     await asyncio.sleep(_API_DELAY_SECONDS)
 
     feed = feedparser.parse(text)
@@ -290,16 +347,7 @@ async def _fetch_papers(
         "sortOrder": "descending",
     }
 
-    async with aiohttp.ClientSession(headers=_API_HEADERS) as session:
-        async with session.get(
-            ARXIV_API_URL,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
-            resp.raise_for_status()
-            text = await resp.text()
-
-    # 遵守 arXiv API 礼貌延迟
+    text = await _api_request(ARXIV_API_URL, params, timeout)
     await asyncio.sleep(_API_DELAY_SECONDS)
 
     feed = feedparser.parse(text)

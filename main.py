@@ -413,6 +413,10 @@ class ArxivPlugin(Star):
                 max_results=max_results,
                 timeout=timeout,
             )
+        except TimeoutError:
+            logger.exception("ArXiv 搜索 '%s' 超时。", query)
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("ArXiv 搜索 '%s' 失败。", query)
             yield event.plain_result("❌ 搜索失败，请稍后重试。")
@@ -475,9 +479,13 @@ class ArxivPlugin(Star):
 
         try:
             paper = await arxiv_client.get_paper_by_id(arxiv_id, timeout=timeout)
+        except TimeoutError:
+            logger.exception("获取论文 '%s' 超时。", arxiv_id)
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("获取论文 '%s' 失败。", arxiv_id)
-            yield event.plain_result("❌ 获取论文失败，请检查 ID 是否正确后重试。")
+            yield event.plain_result("❌ 获取论文失败，请稍后重试。")
             return
 
         if paper is None:
@@ -520,6 +528,10 @@ class ArxivPlugin(Star):
                 max_results=max_results,
                 timeout=timeout,
             )
+        except TimeoutError:
+            logger.exception("ArXiv 获取最新论文超时。")
+            yield event.plain_result("❌ 请求超时，请检查网络连接后重试。")
+            return
         except Exception:
             logger.exception("ArXiv 获取最新论文失败。")
             yield event.plain_result("❌ 获取最新论文失败，请稍后重试。")
