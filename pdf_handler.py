@@ -49,8 +49,12 @@ async def download_pdf(
         filename += ".pdf"
     save_path = save_dir / filename
 
+    headers = {
+        "User-Agent": "astrbot-arxiv-plugin/1.0",
+    }
+
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(
                 url,
                 timeout=aiohttp.ClientTimeout(total=timeout),

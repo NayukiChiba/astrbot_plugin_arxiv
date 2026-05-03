@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -55,6 +56,35 @@ ARXIV_CATEGORIES: dict[str, str] = {
     # 定量金融
     "q-fin.ST": "统计金融",
 }
+
+
+def extractArxivId(inputStr: str) -> str:
+    """从用户输入中提取 arXiv ID，支持直接 ID 和 URL 两种形式。
+
+    支持格式:
+    - 直接 ID: 2501.12345, 2501.12345v1, cs/0601001
+    - abs 链接: https://arxiv.org/abs/2501.12345
+    - pdf 链接: https://arxiv.org/pdf/2501.12345.pdf
+
+    Args:
+        inputStr: 用户输入的 arXiv ID 或 URL。
+
+    Returns:
+        提取的 arXiv ID，如果无法识别则返回去除首尾空白后的原始输入。
+    """
+    inputStr = inputStr.strip()
+
+    # 匹配 arxiv.org/abs/ 或 arxiv.org/pdf/ 链接
+    m = re.search(r'arxiv\.org/(?:abs|pdf)/([^/\s?#]+)', inputStr)
+    if m:
+        rawId = m.group(1)
+        # 去掉可能的 .pdf 后缀
+        if rawId.endswith(".pdf"):
+            rawId = rawId[:-4]
+        return rawId
+
+    # 已经是纯 ID 格式，直接返回
+    return inputStr
 
 
 @dataclass
