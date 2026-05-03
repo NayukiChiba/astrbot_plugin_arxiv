@@ -83,7 +83,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 |--------|------|--------|------|
 | abstract_mode | string | `"original"` | `original` 或 `llm_chinese` |
 | llm_summarize | bool | `false` | 是否使用 LLM 总结论文 |
-| llm_provider_id | string | `""` | LLM 提供商（WebUI 可视化选取） |
+| translate_provider_id | string | `""` | 摘要翻译 LLM 提供商（留空使用默认，可用小模型） |
+| summarize_provider_id | string | `""` | 论文总结 LLM 提供商（需多模态视觉模型，留空使用默认） |
 | llm_summary_prompt | text | `""` | 自定义 LLM 总结 prompt |
 
 ## 依赖

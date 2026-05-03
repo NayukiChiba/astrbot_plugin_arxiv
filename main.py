@@ -18,15 +18,6 @@ from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
 from .arxiv_client import extractArxivId
 from .history import SentHistory
 
-# 默认 LLM 总结 prompt
-_DEFAULT_SUMMARY_PROMPT = (
-    "你是一个学术论文总结助手。请用中文总结以下论文内容。"
-    "重点关注: 1) 主要贡献 2) 核心方法 3) 关键结果和结论。"
-    "总结应简洁专业，不超过 300 字。\n\n"
-    "论文内容:\n{content}"
-)
-
-
 def _time_to_cron(time_str: str) -> str:
     """将 HH:MM 格式的时间字符串转换为 cron 表达式。
 
@@ -257,7 +248,7 @@ class ArxivPlugin(Star):
         if self._send_cfg.get("send_abstract", True):
             abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
-                provider_id = self._llm_cfg.get("llm_provider_id", "")
+                provider_id = self._llm_cfg.get("translate_provider_id", "")
                 logger.info("[%s] 使用 LLM 翻译摘要...", paper.arxiv_id)
                 abstract_text = await llm_service.translate_abstract(
                     self.context,
@@ -289,8 +280,12 @@ class ArxivPlugin(Star):
             else:
                 logger.warning("[%s] PDF 下载失败。", paper.arxiv_id)
 
-        # PDF 首页截图
-        if downloaded_pdf and self._send_cfg.get("screenshot_pdf", True):
+        # PDF 首页截图（screenshot_pdf 或 LLM 总结开启时需要）
+        need_screenshot = (
+            self._send_cfg.get("screenshot_pdf", True)
+            or self._llm_cfg.get("llm_summarize", False)
+        )
+        if downloaded_pdf and need_screenshot:
             dpi = self._send_cfg.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
                 downloaded_pdf,
@@ -303,21 +298,28 @@ class ArxivPlugin(Star):
             else:
                 logger.warning("[%s] PDF 首页截图失败。", paper.arxiv_id)
 
-        # LLM 总结
+        # LLM 总结（优先使用视觉模型 + PDF 截图）
         if downloaded_pdf and self._llm_cfg.get("llm_summarize", False):
-            pdf_text = pdf_handler.extract_text(downloaded_pdf)
-            if pdf_text:
-                provider_id = self._llm_cfg.get("llm_provider_id", "")
-                custom_prompt = (
-                    self._llm_cfg.get("llm_summary_prompt", "")
-                    or _DEFAULT_SUMMARY_PROMPT
-                )
-                summary_text = await llm_service.summarize_paper(
+            provider_id = self._llm_cfg.get("summarize_provider_id", "")
+            custom_prompt = self._llm_cfg.get("llm_summary_prompt", "")
+
+            if screenshot_path:
+                summary_text = await llm_service.summarize_paper_vision(
                     self.context,
-                    pdf_text,
+                    screenshot_path,
                     provider_id=provider_id,
                     custom_prompt=custom_prompt,
                 )
+            else:
+                # 截图失败时回退文本模式
+                pdf_text = pdf_handler.extract_text(downloaded_pdf)
+                if pdf_text:
+                    summary_text = await llm_service.summarize_paper(
+                        self.context,
+                        pdf_text,
+                        provider_id=provider_id,
+                        custom_prompt=custom_prompt,
+                    )
 
         # 摘要渲染为图片（或文本）
         abstract_image_path = ""
