@@ -520,7 +520,7 @@ class ArxivPlugin(Star):
         logger.info("收到 get 请求: '%s'", arxiv_id)
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
 
-        yield event.plain_result(f"🔍 正在获取论文 {arxiv_id}，请稍候...")
+        yield event.plain_result(f"🔍 开始获取 {arxiv_id}，请稍候...")
 
         try:
             paper = await arxiv_client.get_paper_by_id(arxiv_id, timeout=timeout)
