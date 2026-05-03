@@ -9,7 +9,7 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
@@ -355,6 +355,53 @@ class ArxivPlugin(Star):
             abstract_image_path=abstract_image_path,
         )
 
+    def _build_info_chains(
+        self,
+        papers: list[arxiv_client.ArxivPaper],
+    ) -> list[MessageChain]:
+        """为 search/latest 构建消息链列表，支持摘要渲染为图片。
+
+        每条论文生成 1~2 条消息：
+        1. 基本信息（标题、作者、链接等）
+        2. 摘要图片（如果 abstract_as_image 开启）
+        """
+        chains: list[MessageChain] = []
+        send_abstract = self._send_cfg.get("send_abstract", True)
+        abstract_as_image = self._send_cfg.get("abstract_as_image", True)
+
+        for i, paper in enumerate(papers, 1):
+            # 基本信息（摘要是否内嵌取决于是否以图片形式发送）
+            show_in_text = send_abstract and not abstract_as_image
+            info_chain = MessageChain()
+            text = formatter.format_paper_text(
+                paper,
+                index=i,
+                show_abstract=show_in_text,
+                abstract_text=paper.abstract,
+            )
+            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
+            info_chain.chain.append(Plain(text))
+            chains.append(info_chain)
+
+            # 摘要渲染为图片
+            if send_abstract and abstract_as_image and paper.abstract:
+                img_name = f"abstract_{paper.arxiv_id.replace('/', '_')}.png"
+                img_path = self._temp_dir / img_name
+                rendered = text_render.render_abstract_image(paper.abstract, img_path)
+                if rendered:
+                    img_chain = MessageChain()
+                    img_chain.chain.append(Image.fromFileSystem(str(rendered)))
+                    chains.append(img_chain)
+                else:
+                    # 渲染失败时回退为文本
+                    fallback_chain = MessageChain()
+                    fallback_chain.chain.append(
+                        Plain(f"📝 摘要:\n{paper.abstract}")
+                    )
+                    chains.append(fallback_chain)
+
+        return chains
+
     # ── 指令处理 ──────────────────────────────────────────────
 
     @filter.command_group("arxiv")
@@ -429,18 +476,7 @@ class ArxivPlugin(Star):
             return
 
         # search 只推信息，不走 PDF 流程
-        chains = []
-        for i, paper in enumerate(papers, 1):
-            chain = MessageChain()
-            text = formatter.format_paper_text(
-                paper,
-                index=i,
-                show_abstract=self._send_cfg.get("send_abstract", True),
-                abstract_text=paper.abstract,
-            )
-            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
-            chain.chain.append(Plain(text))
-            chains.append(chain)
+        chains = self._build_info_chains(papers)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
@@ -544,18 +580,7 @@ class ArxivPlugin(Star):
             return
 
         # latest 只展示论文信息，不下载 PDF（PDF 仅通过 /arxiv get 获取）
-        chains = []
-        for i, paper in enumerate(papers, 1):
-            chain = MessageChain()
-            text = formatter.format_paper_text(
-                paper,
-                index=i,
-                show_abstract=self._send_cfg.get("send_abstract", True),
-                abstract_text=paper.abstract,
-            )
-            text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
-            chain.chain.append(Plain(text))
-            chains.append(chain)
+        chains = self._build_info_chains(papers)
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:

@@ -73,6 +73,16 @@ def format_paper_text(
     # 链接
     lines.append(f"详情: {paper.abs_url}")
 
+    # 摘要
+    if show_abstract:
+        abs_text = abstract_text or paper.abstract
+        if abs_text:
+            lines.append(f"\n📝 摘要:\n{abs_text}")
+
+    # AI 总结
+    if summary_text:
+        lines.append(f"\n🤖 AI 总结:\n{summary_text}")
+
     return "\n".join(lines)
 
 
