@@ -22,6 +22,20 @@ except ImportError:
     logger.info("pymupdf 未安装，PDF 截图和文本提取功能将被禁用。")
 
 
+class PdfSizeExceededError(Exception):
+    """PDF 文件超出大小限制。"""
+
+    def __init__(self, url: str, actual_bytes: int, max_bytes: int):
+        self.url = url
+        self.actual_bytes = actual_bytes
+        self.max_bytes = max_bytes
+        size_mb = actual_bytes / (1024 * 1024)
+        limit_mb = max_bytes / (1024 * 1024)
+        super().__init__(
+            f"PDF 大小 ({size_mb:.1f} MB) 超出限制 ({limit_mb:.0f} MB)"
+        )
+
+
 async def download_pdf(
     url: str,
     save_dir: Path,
@@ -38,7 +52,10 @@ async def download_pdf(
         max_size_mb: 最大允许文件大小（MB）。
 
     Returns:
-        下载成功返回文件路径，失败或超出大小限制返回 None。
+        下载成功返回文件路径，失败返回 None。
+
+    Raises:
+        PdfSizeExceededError: PDF 文件超出大小限制。
     """
     max_bytes = max_size_mb * 1024 * 1024
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -75,13 +92,7 @@ async def download_pdf(
                 # 优先检查 Content-Length 头
                 content_length = resp.headers.get("Content-Length")
                 if content_length and int(content_length) > max_bytes:
-                    logger.warning(
-                        "PDF %s 超出大小限制: %s 字节 > %s 字节",
-                        url,
-                        content_length,
-                        max_bytes,
-                    )
-                    return None
+                    raise PdfSizeExceededError(url, int(content_length), max_bytes)
 
                 # 流式下载，实时校验大小
                 downloaded = 0
@@ -89,13 +100,9 @@ async def download_pdf(
                     async for chunk in resp.content.iter_chunked(8192):
                         downloaded += len(chunk)
                         if downloaded > max_bytes:
-                            logger.warning(
-                                "PDF %s 在下载过程中超出大小限制。",
-                                url,
-                            )
                             f.close()
                             save_path.unlink(missing_ok=True)
-                            return None
+                            raise PdfSizeExceededError(url, downloaded, max_bytes)
                         f.write(chunk)
 
         # 验证下载的文件是否为有效 PDF（检查文件头魔数）

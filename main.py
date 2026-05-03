@@ -267,18 +267,24 @@ class ArxivPlugin(Star):
         )
 
         downloaded_pdf: Path | None = None
+        pdf_skip_reason: str = ""
         if need_pdf and paper.pdf_url:
             logger.info("[%s] 下载 PDF: %s", paper.arxiv_id, paper.pdf_url)
-            downloaded_pdf = await pdf_handler.download_pdf(
-                paper.pdf_url,
-                self._temp_dir,
-                timeout=timeout,
-                max_size_mb=max_pdf_size,
-            )
+            try:
+                downloaded_pdf = await pdf_handler.download_pdf(
+                    paper.pdf_url,
+                    self._temp_dir,
+                    timeout=timeout,
+                    max_size_mb=max_pdf_size,
+                )
+            except pdf_handler.PdfSizeExceededError as e:
+                logger.warning("[%s] %s", paper.arxiv_id, e)
+                pdf_skip_reason = f"⚠️ PDF 大小超出限制（{max_pdf_size} MB），跳过下载。"
             if downloaded_pdf:
                 logger.info("[%s] PDF 下载成功: %s", paper.arxiv_id, downloaded_pdf)
-            else:
+            elif not pdf_skip_reason:
                 logger.warning("[%s] PDF 下载失败。", paper.arxiv_id)
+                pdf_skip_reason = "⚠️ PDF 下载失败（网络超时或服务器错误），已跳过。"
 
         # PDF 首页截图（screenshot_pdf 或 LLM 总结开启时需要）
         need_screenshot = (
@@ -355,6 +361,7 @@ class ArxivPlugin(Star):
             screenshot_path=screenshot_path,
             pdf_path=pdf_path_str,
             abstract_image_path=abstract_image_path,
+            extra_message=pdf_skip_reason,
         )
 
     def _build_info_chains(
