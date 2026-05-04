@@ -24,7 +24,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 |------|------|
 | `/arxiv help` | 显示帮助信息 |
 | `/arxiv search <关键词> [数量]` | 搜索 arXiv 论文（仅显示信息，数量可选，默认取配置值，最多 20） |
-| `/arxiv get <arxiv_id|url>` | 通过 arXiv ID 或链接获取单篇论文完整内容（含 PDF 截图/LLM 总结） |
+| `/arxiv get <arxiv_id or url>` | 通过 arXiv ID 或链接获取单篇论文完整内容（含 PDF 截图/LLM 总结） |
 | `/arxiv latest` | 获取已配置分类的最新论文 |
 | `/arxiv categories` | 列出所有支持的学科分类 |
 | `/arxiv status` | 查看插件配置和状态 |
