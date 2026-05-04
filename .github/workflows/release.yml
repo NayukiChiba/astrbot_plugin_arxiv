@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 提取版本号
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: 提取 CHANGELOG
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # 提取当前版本的 changelog 内容
+          # 匹配从 "## vX.Y.Z" 到下一个 "## v" 之间的内容
+          CHANGELOG=$(awk -v tag="$TAG" '
+            BEGIN { found=0; output="" }
+            $0 ~ "^## " tag {
+              found=1
+              next
+            }
+            found && /^## v/ { exit }
+            found {
+              output = output $0 "\n"
+            }
+            END { print output }
+          ' CHANGELOG.md)
+
+          # 去掉首尾空行
+          CHANGELOG=$(echo "$CHANGELOG" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+          # 写入文件供后续使用（避免多行字符串在 GitHub Actions 中出问题）
+          echo "$CHANGELOG" > /tmp/changelog.md
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 打包插件
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          PLUGIN_NAME="astrbot_plugin_arxiv"
+
+          # 创建临时目录并复制插件文件
+          mkdir -p /tmp/release/$PLUGIN_NAME
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='.pytest_cache' \
+            --exclude='.ruff_cache' \
+            --exclude='tests' \
+            ./ /tmp/release/$PLUGIN_NAME/
+
+          # 打包
+          cd /tmp/release
+          zip -r $PLUGIN_NAME-$TAG.zip $PLUGIN_NAME
+          mv $PLUGIN_NAME-$TAG.zip $GITHUB_WORKSPACE/
+
+          echo "zip_name=$PLUGIN_NAME-$TAG.zip" >> $GITHUB_OUTPUT
+        id: package
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.tag }}
+          body_path: /tmp/changelog.md
+          files: ${{ steps.package.outputs.zip_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
