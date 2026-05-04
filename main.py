@@ -176,20 +176,29 @@ class ArxivPlugin(Star):
 
         # 根据配置的模式发送
         use_forward = self._send_cfg.get("use_forward", True)
-        try:
-            if use_forward:
-                bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
-                msg = formatter.build_forward_nodes(
-                    chains,
-                    bot_name=bot_name,
-                )
-                await self.context.send_message(session, msg)
-            else:
-                for chain in chains:
+        if use_forward:
+            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+            forwardMsg, fileChains = formatter.build_forward_nodes(
+                chains,
+                bot_name=bot_name,
+            )
+            # 先发合并转发消息
+            try:
+                await self.context.send_message(session, forwardMsg)
+            except Exception:
+                logger.exception("ArXiv 合并转发消息发送失败。")
+            # 再单独发送被提取出来的 File 链（PDF 附件）
+            for fileChain in fileChains:
+                try:
+                    await self.context.send_message(session, fileChain)
+                except Exception:
+                    logger.exception("PDF 文件发送失败 (%s)。", session)
+        else:
+            for chain in chains:
+                try:
                     await self.context.send_message(session, chain)
-        except Exception:
-            logger.exception("ArXiv 推送至 %s 失败。", session)
-            return
+                except Exception:
+                    logger.exception("论文消息发送失败 (%s)。", session)
 
         # 标记为已发送
         self._history.mark_sent_batch(
@@ -509,8 +518,12 @@ class ArxivPlugin(Star):
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
-            msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield self._make_result(msg)
+            forwardMsg, fileChains = formatter.build_forward_nodes(
+                chains, bot_name=bot_name
+            )
+            yield self._make_result(forwardMsg)
+            for fileChain in fileChains:
+                yield self._make_result(fileChain)
         else:
             for chain in chains:
                 yield self._make_result(chain)
@@ -568,8 +581,12 @@ class ArxivPlugin(Star):
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
-            msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield self._make_result(msg)
+            forwardMsg, fileChains = formatter.build_forward_nodes(
+                chains, bot_name=bot_name
+            )
+            yield self._make_result(forwardMsg)
+            for fileChain in fileChains:
+                yield self._make_result(fileChain)
         else:
             for chain in chains:
                 yield self._make_result(chain)
@@ -613,8 +630,12 @@ class ArxivPlugin(Star):
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
-            msg = formatter.build_forward_nodes(chains, bot_name=bot_name)
-            yield self._make_result(msg)
+            forwardMsg, fileChains = formatter.build_forward_nodes(
+                chains, bot_name=bot_name
+            )
+            yield self._make_result(forwardMsg)
+            for fileChain in fileChains:
+                yield self._make_result(fileChain)
         else:
             for chain in chains:
                 yield self._make_result(chain)

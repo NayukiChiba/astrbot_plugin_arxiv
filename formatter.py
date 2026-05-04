@@ -176,12 +176,12 @@ def build_forward_nodes(
     *,
     bot_name: str = "ArXiv Bot",
     bot_uin: str = "0",
-) -> MessageChain:
+) -> tuple[MessageChain, list[MessageChain]]:
     """将多篇论文的消息链包装为合并转发 Nodes。
 
-    Notes:
-        File 组件（PDF 附件）在合并转发消息中不被 NapCat 等平台支持
-        （仅含本地路径，缺少 url/file_id），会被自动过滤。
+    File 组件（PDF 附件）在合并转发消息中不被 NapCat 等平台支持
+    （仅含本地路径，缺少 url/file_id），因此会被提取并返回，
+    由调用方在合并转发消息之后单独发送。
 
     Args:
         papers_chains: 每篇论文对应的 MessageChain 列表。
@@ -189,27 +189,35 @@ def build_forward_nodes(
         bot_uin: 合并转发中显示的 QQ 号。
 
     Returns:
-        包含一个 Nodes 组件的 MessageChain。
+        (合并转发消息, 需要单独发送的 File 链列表)
     """
     nodes: list[Node] = []
+    fileChains: list[MessageChain] = []
 
     # 头部节点
+    header_lines = [f"📚 ArXiv 论文推送 ({len(papers_chains)} 篇)"]
     header_chain = MessageChain()
-    header_chain.chain.append(Plain(f"📚 ArXiv 论文推送 ({len(papers_chains)} 篇)"))
+    header_chain.chain.append(Plain("\n".join(header_lines)))
     nodes.append(Node(content=header_chain.chain, name=bot_name, uin=bot_uin))
 
-    # 每篇论文一个节点，过滤掉 File 组件
+    # 每篇论文一个节点，提取 File 组件
     for chain in papers_chains:
-        filtered = [
-            comp for comp in chain.chain if not isinstance(comp, File)
-        ]
+        filtered: list = []
+        hasFile = False
+        for comp in chain.chain:
+            if isinstance(comp, File):
+                hasFile = True
+            else:
+                filtered.append(comp)
+        if hasFile:
+            fileChains.append(chain)
         if not filtered:
             continue
         nodes.append(Node(content=filtered, name=bot_name, uin=bot_uin))
 
     result = MessageChain()
     result.chain.append(Nodes(nodes=nodes))
-    return result
+    return result, fileChains
 
 
 def build_no_results_chain() -> MessageChain:
