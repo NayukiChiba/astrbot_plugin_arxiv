@@ -88,6 +88,7 @@ jobs:
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           body_path: /tmp/changelog.md
           files: ${{ steps.package.outputs.zip_name }}
