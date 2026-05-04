@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.3 (2026-05-04)
+
+### 修复
+
+- **合并转发 PDF 丢失** — 修复合并转发模式下 PDF 附件被静默丢弃的问题。现在 `build_forward_nodes` 自动提取含 File 组件的消息链，先发送不含 File 的合并转发消息，再将 PDF 作为独立文件消息单独发送，确保 NapCat 等平台正常接收
+- **逐条发送模式单条失败中断** — 修复非合并转发模式下单条消息发送失败导致后续论文全部跳过的问题。每条消息独立 try/except，一条失败不影响其余消息的发送
+
+### 改进
+
+- `build_forward_nodes` 返回类型从 `MessageChain` 改为 `tuple[MessageChain, list[MessageChain]]`，File 链与 Nodes 链职责分离
+- `search` / `get` / `latest` / 定时推送四个入口统一使用文件分离模式，消除重复代码
+
 ## v1.0.2 (2026-05-04)
 
 ### 新功能

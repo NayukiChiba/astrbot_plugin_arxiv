@@ -19,7 +19,12 @@ jobs:
       - name: 提取版本号
         id: version
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          # tag push 时从 GITHUB_REF 提取，workflow_dispatch 时从 metadata.yaml 读取
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG=$(grep -oP 'version:\s*\K\S+' metadata.yaml)
+          fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
