@@ -41,7 +41,7 @@ def _time_to_cron(time_str: str) -> str:
     "astrbot_plugin_arxiv",
     "NayukiChiba",
     "ArXiv 论文搜索与定时推送插件",
-    "1.0.3",
+    "1.0.4",
 )
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""

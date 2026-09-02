@@ -6,6 +6,9 @@ __pycache__/
 # Tests
 tests/
 
+# 本地数据目录（运行测试时 astrbot 核心会按当前工作目录生成）
+data/
+
 # C extensions
 *.so
 
