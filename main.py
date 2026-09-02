@@ -18,6 +18,10 @@ from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
 from .arxiv_client import extractArxivId
 from .history import SentHistory
 
+# 定时任务在 AstrBot 数据库中的唯一名称，用于去重
+_CRON_JOB_NAME = "arxiv_daily_push"
+
+
 def _time_to_cron(time_str: str) -> str:
     """将 HH:MM 格式的时间字符串转换为 cron 表达式。
 
@@ -96,15 +100,42 @@ class ArxivPlugin(Star):
 
         logger.info("ArXiv 论文推送插件已初始化。")
 
+    async def _cleanup_duplicate_jobs(self) -> None:
+        """删除数据库中同名的历史推送任务，避免出现多个未来任务。
+
+        AstrBot 每次 add_basic_job 都会新增一行记录（不按名称去重）。
+        若上次进程异常退出导致 terminate() 未执行，旧记录会遗留在
+        数据库中，WebUI 的「未来任务」页面会将其全部列出。
+        """
+        try:
+            jobs = await self.context.cron_manager.list_jobs("basic")
+        except Exception:
+            logger.exception("查询历史定时任务失败，跳过同名任务清理。")
+            return
+
+        for job in jobs:
+            if job.name != _CRON_JOB_NAME:
+                continue
+            try:
+                await self.context.cron_manager.delete_job(job.job_id)
+                logger.info("已清理旧的 ArXiv 定时任务 %s。", job.job_id)
+            except Exception:
+                logger.exception("清理旧的 ArXiv 定时任务 %s 失败。", job.job_id)
+
     async def _register_cron_job(self) -> None:
-        """注册定时推送任务。"""
+        """注册定时推送任务。
+
+        注册前先清理同名历史任务，保证任何时刻全局只有一个推送任务。
+        """
+        await self._cleanup_duplicate_jobs()
+
         push_time = self._send_cfg.get("push_time", "09:00")
         timezone = self._send_cfg.get("push_timezone", "Asia/Shanghai")
         cron_expr = _time_to_cron(push_time)
 
         try:
             job = await self.context.cron_manager.add_basic_job(
-                name="arxiv_daily_push",
+                name=_CRON_JOB_NAME,
                 cron_expression=cron_expr,
                 handler=self._scheduled_push,
                 description=f"ArXiv 每日论文推送 ({push_time})",
