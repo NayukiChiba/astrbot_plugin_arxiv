@@ -10,6 +10,7 @@ from astrbot.api.message_components import File, Image, Node, Nodes, Plain
 from astrbot.core.message.message_event_result import MessageChain
 
 from .arxiv_client import ARXIV_CATEGORIES, ArxivPaper
+from .llm_service import VISION_FAILURE_TEXT
 
 
 def _get_category_display(categories: list[str]) -> str:
@@ -80,7 +81,9 @@ def format_paper_text(
             lines.append(f"\n📝 摘要:\n{abs_text}")
 
     # AI 总结
-    if summary_text:
+    if summary_text == VISION_FAILURE_TEXT:
+        lines.append(f"\n{VISION_FAILURE_TEXT}")
+    elif summary_text:
         lines.append(f"\n🤖 AI 总结:\n{summary_text}")
 
     return "\n".join(lines)
@@ -126,7 +129,7 @@ def build_paper_chains(
         paper,
         index=index,
         show_abstract=False,
-        summary_text=summary_text,
+        summary_text="" if summary_text == VISION_FAILURE_TEXT else summary_text,
     )
     info_chain.chain.append(Plain(text))
     chains.append(info_chain)
@@ -159,7 +162,10 @@ def build_paper_chains(
     # 第 5 条消息：AI 总结
     if summary_text:
         summary_chain = MessageChain()
-        summary_chain.chain.append(Plain(f"🤖 AI 总结:\n{summary_text}"))
+        if summary_text == VISION_FAILURE_TEXT:
+            summary_chain.chain.append(Plain(VISION_FAILURE_TEXT))
+        else:
+            summary_chain.chain.append(Plain(f"🤖 AI 总结:\n{summary_text}"))
         chains.append(summary_chain)
 
     # 额外消息（如 PDF 跳过原因等）

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
@@ -32,6 +33,28 @@ VISION_SUMMARY_PROMPT = (
     "2) 核心方法和技术路线\n"
     "3) 关键结果和结论\n"
     "总结应简洁专业，不超过 300 字。"
+)
+
+VISION_FAILURE_TEXT = "识图失败"
+VISION_FAILURE_PROMPT = (
+    "如果图片无法加载、格式不支持、无法查看或无法识别论文内容，"
+    f"仅输出“{VISION_FAILURE_TEXT}”。"
+    "不要解释原因，不要请求重新上传图片或粘贴文字，不要编造总结。"
+)
+# Catch common failure replies when the model ignores the required short response.
+VISION_FAILURE_PATTERN = re.compile(
+    r"^\W*识图失败"
+    r"|不支持的(?:图片|图像)"
+    r"|(?:图片|图像|截图)[^。！？\n]{0,20}(?:未能|无法|未成功|没有成功)[^。！？\n]{0,6}加载"
+    r"|(?:我|当前模型|本模型)[^。！？\n]{0,12}(?:无法|不能|不支持)"
+    r"[^。！？\n]{0,12}(?:查看|读取|识别|访问|解析|处理|看清)"
+    r"[^。！？\n]{0,12}(?:图片|图像|截图|论文首页)"
+    r"|(?:^|[。！？\n])\s*(?:无法|不能)(?:查看|读取|识别|加载)"
+    r"(?:图片|图像|截图|论文首页)"
+    r"|(?:unsupported|invalid) image"
+    r"|(?:cannot|can't|unable to) (?:view|see|read|access|load) "
+    r"(?:the |this |your |uploaded )*(?:image|screenshot)",
+    re.IGNORECASE,
 )
 
 # 摘要翻译 prompt
@@ -168,15 +191,15 @@ async def summarize_paper_vision(
         custom_prompt: 自定义 prompt，留空使用默认视觉提示词。
 
     Returns:
-        总结文本，失败时返回空字符串。
+        总结文本，图片识别或模型调用失败时返回“识图失败”。
     """
     if not screenshot_path:
-        return ""
+        return VISION_FAILURE_TEXT
 
     pid = provider_id or _get_default_provider_id(context)
     if not pid:
         logger.warning("没有可用的 LLM 提供商，无法总结论文。")
-        return ""
+        return VISION_FAILURE_TEXT
 
     prompt = custom_prompt or VISION_SUMMARY_PROMPT
     logger.info("使用视觉模型 '%s' 总结论文...", pid)
@@ -186,12 +209,18 @@ async def summarize_paper_vision(
             chat_provider_id=pid,
             prompt=prompt,
             image_urls=[screenshot_path],
+            system_prompt=VISION_FAILURE_PROMPT,
         )
         if resp and resp.completion_text:
-            logger.info("视觉模型总结成功，%d 字符。", len(resp.completion_text))
-            return resp.completion_text.strip()
+            summaryText = resp.completion_text.strip()
+            if VISION_FAILURE_PATTERN.search(summaryText):
+                logger.warning("Vision model reported image recognition failure.")
+                return VISION_FAILURE_TEXT
+            if summaryText:
+                logger.info("视觉模型总结成功，%d 字符。", len(summaryText))
+                return summaryText
         logger.warning("视觉模型返回空内容。")
     except Exception:
         logger.exception("视觉模型论文总结失败。")
 
-    return ""
+    return VISION_FAILURE_TEXT
