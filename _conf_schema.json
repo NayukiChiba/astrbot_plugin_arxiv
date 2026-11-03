@@ -179,17 +179,18 @@
       "instances": {
         "description": "机器人实例单独适配",
         "type": "template_list",
-        "hint": "为某个机器人实例单独覆盖发送设置，优先级高于平台类型配置。实例 ID 即 UMO 第一段，可在「机器人」页面或 ArXiv 控制台查看。",
+        "hint": "为某个机器人实例单独覆盖发送设置，优先级高于平台类型配置。添加条目后选择目标机器人所在的任意会话，即对其所属机器人实例生效。",
         "default": [],
         "templates": {
           "instance": {
             "name": "机器人实例",
-            "display_item": "platform_instance",
+            "display_item": "session",
             "items": {
-              "platform_instance": {
+              "session": {
                 "type": "string",
-                "description": "机器人实例 ID",
-                "hint": "平台实例 ID（UMO 第一段），如 qq_napcat_test。可在「机器人」页面或 ArXiv 控制台查看。",
+                "description": "机器人所在会话",
+                "_special": "umo",
+                "hint": "选择目标机器人所在的任意会话（群聊/私聊），配置对该会话所属的机器人实例生效。也可手动输入 UMO（如 qq_napcat_test:GroupMessage:123456）。",
                 "default": ""
               },
               "text_format": {

@@ -109,7 +109,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | aiocqhttp | bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人昵称（开启合并转发时显示） |
 | qqofficial（含 webhook） | text_format | string | `"markdown"` | QQ 官方机器人支持 Markdown 渲染 |
 
-**机器人实例单独适配**：在 `instances` 中添加条目，填写机器人实例 ID（UMO 第一段，可在「机器人」页面查看），即可为该实例单独覆盖文本格式与合并转发设置，优先级高于平台类型配置。
+**机器人实例单独适配**：在 `instances` 中添加条目，通过会话选择器选择目标机器人所在的任意会话（也可手动输入 UMO），即可对该会话所属的机器人实例单独覆盖文本格式与合并转发设置，优先级高于平台类型配置。
 
 发送时的强制规则（不受配置影响）：
 

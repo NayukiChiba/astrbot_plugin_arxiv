@@ -55,7 +55,7 @@ function effectivePlatformConfig(platformName, platformId) {
   const key = platformName.startsWith("qqofficial") ? "qqofficial" : platformName;
   const eff = { ...(pcfg.default || {}), ...(pcfg[key] || {}) };
   for (const entry of pcfg.instances || []) {
-    if (entry.platform_instance === platformId) Object.assign(eff, entry);
+    if ((entry.session || "").split(":")[0] === platformId) Object.assign(eff, entry);
   }
   if (platformName === "aiocqhttp") eff.text_format = "plain";
   else eff.use_forward = false;
