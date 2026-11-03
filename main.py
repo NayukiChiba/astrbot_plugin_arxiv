@@ -132,14 +132,15 @@ class ArxivPlugin(Star):
         key = "qqofficial" if platform_name.startswith("qqofficial") else platform_name
         settings.update(platform_cfg.get(key, {}))
 
-        # 实例级适配条目覆盖平台类型配置
+        # 实例级适配条目覆盖平台类型配置（取条目会话 UMO 首段匹配实例 ID）
         for entry in platform_cfg.get("instances", []):
-            if platform_id and entry.get("platform_instance") == platform_id:
+            entry_session = entry.get("session", "")
+            if platform_id and entry_session.split(":", 1)[0] == platform_id:
                 settings.update(
                     {
                         k: v
                         for k, v in entry.items()
-                        if k not in ("platform_instance", "__template_key")
+                        if k not in ("session", "__template_key")
                     }
                 )
 
