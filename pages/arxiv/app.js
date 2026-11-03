@@ -48,17 +48,32 @@ function escapeHtml(text) {
 
 // ── 概览 ──────────────────────────────────────────────
 
+// 合并默认配置、平台类型配置与实例条目，得到某平台实例的生效设置。
+// 与后端规则一致：aiocqhttp 强制纯文本，合并转发仅 aiocqhttp 生效。
+function effectivePlatformConfig(platformName, platformId) {
+  const pcfg = state.overview?.config?.platform_config || {};
+  const key = platformName.startsWith("qqofficial") ? "qqofficial" : platformName;
+  const eff = { ...(pcfg.default || {}), ...(pcfg[key] || {}) };
+  for (const entry of pcfg.instances || []) {
+    if (entry.platform_instance === platformId) Object.assign(eff, entry);
+  }
+  if (platformName === "aiocqhttp") eff.text_format = "plain";
+  else eff.use_forward = false;
+  return eff;
+}
+
 async function loadOverview() {
   const res = await bridge.apiGet("overview");
   state.overview = res;
   const cfg = res.config;
   const storage = res.storage;
 
+  const aioCfg = (cfg.platform_config || {}).aiocqhttp || {};
   const badges = [
     `推送 ${cfg.push_time}`,
-    `格式 ${cfg.text_format}`,
+    `默认格式 ${(cfg.platform_config || {}).default?.text_format || "plain"}`,
     cfg.send_as_image ? "按图发送" : "文本发送",
-    cfg.use_forward ? "合并转发" : "逐条发送",
+    aioCfg.use_forward ? "aiocqhttp 合并转发" : "逐条发送",
     storage.enabled ? `存储 ${storage.retention_days} 天` : "存储关闭",
   ];
   $("status-badges").innerHTML = badges
@@ -82,17 +97,29 @@ function updateStorageInfo() {
     : "存储已关闭（在插件配置中开启 store_papers 后，发送的论文与 PDF 才会保存到这里）";
 }
 
-// 根据所选会话推断平台类型并展示
+// 根据所选会话推断平台类型并展示该平台的生效设置
 function updateSessionPlatform() {
   const session = $("send-session").value.trim();
   const platformId = session.split(":")[0];
   const platforms = state.overview?.platforms || [];
   const hit = platforms.find((p) => p.id === platformId);
-  $("session-platform").textContent = session
-    ? hit
-      ? `平台类型: ${hit.name}`
-      : `平台实例: ${platformId}（未在已连接平台中找到）`
-    : "";
+  if (!session) {
+    $("session-platform").textContent = "";
+    return;
+  }
+  if (!hit) {
+    $("session-platform").textContent = `平台实例: ${platformId}（未在已连接平台中找到，将按默认平台设置发送）`;
+    return;
+  }
+  const eff = effectivePlatformConfig(hit.name, hit.id);
+  const parts = [
+    `平台类型: ${hit.name}`,
+    `格式 ${eff.text_format || "plain"}`,
+  ];
+  if (hit.name === "aiocqhttp") {
+    parts.push(eff.use_forward ? "合并转发" : "逐条发送");
+  }
+  $("session-platform").textContent = parts.join(" · ");
 }
 
 // ── 论文库 ────────────────────────────────────────────
