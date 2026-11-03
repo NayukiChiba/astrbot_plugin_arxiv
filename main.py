@@ -5,21 +5,46 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Image, Plain
+from astrbot.api.message_components import File, Image, Plain
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
 
-from . import arxiv_client, formatter, llm_service, pdf_handler, text_render
+from . import (
+    arxiv_client,
+    formatter,
+    image_render,
+    llm_service,
+    pdf_handler,
+    text_render,
+)
 from .arxiv_client import extractArxivId
 from .history import SentHistory
 
 # 定时任务在 AstrBot 数据库中的唯一名称，用于去重
 _CRON_JOB_NAME = "arxiv_daily_push"
+
+
+def _resolve_text_format(fmt: str, platform_name: str) -> str:
+    """根据配置与平台类型决定文本格式。
+
+    Args:
+        fmt: 配置项 text_format 的值（auto / plain / markdown）。
+        platform_name: 平台类型名，如 aiocqhttp、qqofficial_webhook。
+
+    Returns:
+        "plain" 或 "markdown"。auto 模式下仅 QQ 官方平台使用 markdown。
+    """
+    if fmt == "auto":
+        return "markdown" if platform_name.startswith("qqofficial") else "plain"
+    if fmt in ("plain", "markdown"):
+        return fmt
+    return "plain"
 
 
 def _time_to_cron(time_str: str) -> str:
@@ -41,7 +66,7 @@ def _time_to_cron(time_str: str) -> str:
     "astrbot_plugin_arxiv",
     "NayukiChiba",
     "ArXiv 论文搜索与定时推送插件",
-    "1.0.5",
+    "1.1.0",
 )
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
@@ -80,6 +105,9 @@ class ArxivPlugin(Star):
         self._data_dir = StarTools.get_data_dir("astrbot_plugin_arxiv")
         self._temp_dir = self._data_dir / "temp"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # 安装内置卡片模板到用户模板目录（不覆盖用户已有模板）
+        image_render.install_builtin_templates(self._data_dir / "templates")
 
         # 初始化已发送历史
         retention = self._send_cfg.get("history_retention_days", 30)
@@ -199,8 +227,13 @@ class ArxivPlugin(Star):
             logger.info("ArXiv 推送至 %s：无新论文。", session)
             return
 
-        # 处理每篇论文
-        chains = await self._process_papers(unsent_papers)
+        # 处理每篇论文（按目标平台决定文本格式）
+        platform_name = self._resolve_platform_name(session)
+        text_format = _resolve_text_format(
+            self._send_cfg.get("text_format", "auto"),
+            platform_name,
+        )
+        chains = await self._process_papers(unsent_papers, text_format=text_format)
 
         if not chains:
             return
@@ -250,9 +283,34 @@ class ArxivPlugin(Star):
         mer.use_t2i_ = False
         return mer
 
+    def _resolve_platform_name(self, umo: str) -> str:
+        """从 UMO 解析平台类型名（如 aiocqhttp、qqofficial_webhook）。
+
+        UMO 第一段是平台实例 ID（可被用户改名），优先通过
+        context.get_platform_inst 反查平台类型；反查失败时直接返回该 ID。
+        """
+        platform_id = umo.split(":", 1)[0]
+        try:
+            inst = self.context.get_platform_inst(platform_id)
+            name = inst.meta().name if inst else ""
+            if name:
+                return name
+        except Exception:
+            logger.debug("反查平台类型失败: %s", platform_id)
+        return platform_id
+
+    def _text_format_for_event(self, event: AstrMessageEvent) -> str:
+        """根据事件所属平台决定文本格式（plain 或 markdown）。"""
+        return _resolve_text_format(
+            self._send_cfg.get("text_format", "auto"),
+            event.get_platform_name(),
+        )
+
     async def _process_papers(
         self,
         papers: list[arxiv_client.ArxivPaper],
+        *,
+        text_format: str = "plain",
     ) -> list[MessageChain]:
         """处理论文列表，生成消息链。"""
         logger.info("开始处理 %d 篇论文。", len(papers))
@@ -261,7 +319,11 @@ class ArxivPlugin(Star):
         for i, paper in enumerate(papers, 1):
             try:
                 logger.info("处理论文 [%d/%d]: %s", i, len(papers), paper.title)
-                paper_chains = await self._process_single_paper(paper, index=i)
+                paper_chains = await self._process_single_paper(
+                    paper,
+                    index=i,
+                    text_format=text_format,
+                )
                 chains.extend(paper_chains)
                 logger.info(
                     "论文 %s 处理完成，生成 %d 条消息。",
@@ -279,13 +341,15 @@ class ArxivPlugin(Star):
         paper: arxiv_client.ArxivPaper,
         *,
         index: int = 0,
+        text_format: str = "plain",
     ) -> list[MessageChain]:
-        """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染摘要图片。"""
+        """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。"""
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
         abstract_text = ""
         summary_text = ""
         screenshot_path = ""
         pdf_path_str = ""
+        send_as_image = self._send_cfg.get("send_as_image", False)
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -334,10 +398,9 @@ class ArxivPlugin(Star):
                 pdf_skip_reason = "⚠️ PDF 下载失败（网络超时或服务器错误），已跳过。"
 
         # PDF 首页截图（screenshot_pdf 或 LLM 总结开启时需要）
-        need_screenshot = (
-            self._send_cfg.get("screenshot_pdf", True)
-            or self._llm_cfg.get("llm_summarize", False)
-        )
+        need_screenshot = self._send_cfg.get(
+            "screenshot_pdf", True
+        ) or self._llm_cfg.get("llm_summarize", False)
         if downloaded_pdf and need_screenshot:
             dpi = self._send_cfg.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
@@ -374,9 +437,11 @@ class ArxivPlugin(Star):
                         custom_prompt=custom_prompt,
                     )
 
-        # 摘要渲染为图片（或文本）
+        # 摘要渲染为图片（或文本）。按图发送模式下摘要并入卡片，跳过 PIL 渲染。
         abstract_image_path = ""
-        use_abstract_image = self._send_cfg.get("abstract_as_image", True)
+        use_abstract_image = (
+            self._send_cfg.get("abstract_as_image", True) and not send_as_image
+        )
         send_abstract = self._send_cfg.get("send_abstract", True)
 
         if send_abstract and abstract_text and use_abstract_image:
@@ -399,6 +464,21 @@ class ArxivPlugin(Star):
         if downloaded_pdf and self._send_cfg.get("attach_pdf", False):
             pdf_path_str = str(downloaded_pdf)
 
+        # 按图发送：整篇论文渲染为一张卡片图片
+        if send_as_image:
+            image_chains = await self._build_image_paper_chains(
+                paper,
+                index=index,
+                abstract_text=abstract_text if send_abstract else "",
+                summary_text=summary_text,
+                screenshot_path=screenshot_path,
+                pdf_path=pdf_path_str,
+                extra_message=pdf_skip_reason,
+            )
+            if image_chains is not None:
+                return image_chains
+            logger.warning("[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id)
+
         return formatter.build_paper_chains(
             paper,
             index=index,
@@ -409,23 +489,99 @@ class ArxivPlugin(Star):
             pdf_path=pdf_path_str,
             abstract_image_path=abstract_image_path,
             extra_message=pdf_skip_reason,
+            markdown=text_format == "markdown",
         )
+
+    async def _build_image_paper_chains(
+        self,
+        paper: arxiv_client.ArxivPaper,
+        *,
+        index: int = 0,
+        abstract_text: str = "",
+        summary_text: str = "",
+        screenshot_path: str = "",
+        pdf_path: str = "",
+        extra_message: str = "",
+    ) -> list[MessageChain] | None:
+        """将整篇论文渲染为一张卡片图片（按图发送模式）。
+
+        元信息、摘要与 AI 总结合并渲染为一张 HTML 卡片图片；
+        PDF 首页截图以 Base64 内嵌进卡片；PDF 附件仍单独发送。
+
+        Returns:
+            消息链列表；渲染失败时返回 None，由调用方回退为文本模式。
+        """
+        screenshot_b64 = ""
+        if screenshot_path:
+            try:
+                screenshot_b64 = base64.b64encode(
+                    Path(screenshot_path).read_bytes()
+                ).decode("ascii")
+            except OSError:
+                logger.warning(
+                    "[%s] 读取 PDF 截图失败，卡片中不含截图。", paper.arxiv_id
+                )
+
+        data = image_render.build_paper_template_data(
+            paper,
+            index=index,
+            abstract_text=abstract_text,
+            summary_text=summary_text,
+            screenshot_b64=screenshot_b64,
+            extra_message=extra_message,
+        )
+        template_name = self._send_cfg.get("image_template", "default")
+        try:
+            template_str = image_render.load_template(
+                self._data_dir / "templates",
+                template_name,
+            )
+            rendered_path = await self.html_render(
+                template_str,
+                data,
+                return_url=False,
+                options={"full_page": True, "type": "jpeg", "quality": 90},
+            )
+        except Exception:
+            logger.exception("[%s] 论文卡片渲染失败。", paper.arxiv_id)
+            return None
+
+        img_chain = MessageChain()
+        img_chain.chain.append(Image.fromFileSystem(str(rendered_path)))
+        chains = [img_chain]
+
+        # PDF 附件无法并入图片，单独发送
+        if pdf_path:
+            pdf_chain = MessageChain()
+            pdf_name = f"{paper.arxiv_id.replace('/', '_')}.pdf"
+            pdf_chain.chain.append(File(name=pdf_name, file=pdf_path))
+            chains.append(pdf_chain)
+
+        return chains
 
     async def _build_info_chains(
         self,
         papers: list[arxiv_client.ArxivPaper],
+        *,
+        text_format: str = "plain",
     ) -> list[MessageChain]:
         """为 search/latest 构建消息链列表，支持摘要渲染为图片和 LLM 翻译。
 
         每条论文生成 1~2 条消息：
         1. 基本信息（标题、作者、链接等）
         2. 摘要图片（如果 abstract_as_image 开启）
+
+        按图发送模式下每篇论文渲染为一张卡片图片（元信息 + 摘要）。
         """
         chains: list[MessageChain] = []
         send_abstract = self._send_cfg.get("send_abstract", True)
-        abstract_as_image = self._send_cfg.get("abstract_as_image", True)
+        send_as_image = self._send_cfg.get("send_as_image", False)
+        abstract_as_image = (
+            self._send_cfg.get("abstract_as_image", True) and not send_as_image
+        )
         abstract_mode = self._llm_cfg.get("abstract_mode", "original")
         translate_provider_id = self._llm_cfg.get("translate_provider_id", "")
+        markdown = text_format == "markdown"
 
         for i, paper in enumerate(papers, 1):
             # 摘要处理（支持 LLM 翻译）
@@ -438,6 +594,20 @@ class ArxivPlugin(Star):
                     provider_id=translate_provider_id,
                 )
 
+            # 按图发送：元信息与摘要以一张卡片图片呈现
+            if send_as_image:
+                image_chains = await self._build_image_paper_chains(
+                    paper,
+                    index=i,
+                    abstract_text=abstract_text if send_abstract else "",
+                )
+                if image_chains is not None:
+                    chains.extend(image_chains)
+                    continue
+                logger.warning(
+                    "[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id
+                )
+
             # 基本信息（摘要是否内嵌取决于是否以图片形式发送）
             show_in_text = send_abstract and not abstract_as_image
             info_chain = MessageChain()
@@ -446,6 +616,7 @@ class ArxivPlugin(Star):
                 index=i,
                 show_abstract=show_in_text,
                 abstract_text=abstract_text,
+                markdown=markdown,
             )
             text += f"\n\n💡 使用 /arxiv get {paper.arxiv_id} 获取完整内容（含 PDF）"
             info_chain.chain.append(Plain(text))
@@ -463,9 +634,8 @@ class ArxivPlugin(Star):
                 else:
                     # 渲染失败时回退为文本
                     fallback_chain = MessageChain()
-                    fallback_chain.chain.append(
-                        Plain(f"📝 摘要:\n{abstract_text}")
-                    )
+                    heading = "### 📝 摘要\n\n" if markdown else "📝 摘要:\n"
+                    fallback_chain.chain.append(Plain(f"{heading}{abstract_text}"))
                     chains.append(fallback_chain)
 
         return chains
@@ -544,7 +714,10 @@ class ArxivPlugin(Star):
             return
 
         # search 只推信息，不走 PDF 流程
-        chains = await self._build_info_chains(papers)
+        chains = await self._build_info_chains(
+            papers,
+            text_format=self._text_format_for_event(event),
+        )
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
@@ -604,7 +777,10 @@ class ArxivPlugin(Star):
 
         logger.info("获取论文成功: %s", paper.title)
 
-        chains = await self._process_papers([paper])
+        chains = await self._process_papers(
+            [paper],
+            text_format=self._text_format_for_event(event),
+        )
         if not chains:
             yield event.plain_result("📭 处理论文时出错。")
             return
@@ -656,7 +832,10 @@ class ArxivPlugin(Star):
             return
 
         # latest 只展示论文信息，不下载 PDF（PDF 仅通过 /arxiv get 获取）
-        chains = await self._build_info_chains(papers)
+        chains = await self._build_info_chains(
+            papers,
+            text_format=self._text_format_for_event(event),
+        )
 
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
@@ -692,6 +871,13 @@ class ArxivPlugin(Star):
 
         mode_display = "合并转发" if use_forward else "逐条发送"
         abstract_display = "原文" if abstract_mode == "original" else "LLM 中文翻译"
+        text_format_cfg = self._send_cfg.get("text_format", "auto")
+        text_format_display = _resolve_text_format(
+            text_format_cfg,
+            event.get_platform_name(),
+        )
+        if text_format_cfg == "auto":
+            text_format_display = f"auto（当前平台 {text_format_display}）"
 
         lines = [
             "📊 ArXiv 插件状态",
@@ -702,6 +888,8 @@ class ArxivPlugin(Star):
             f"⏰ 推送时间: {push_time} ({timezone})",
             f"🎯 目标会话: {len(targets)} 个",
             f"📨 发送模式: {mode_display}",
+            f"🔤 文本格式: {text_format_display}",
+            f"🌅 按图发送: {'开启' if self._send_cfg.get('send_as_image') else '关闭'}",
             f"📝 摘要模式: {abstract_display}",
             f"🖼️ PDF 截图: {'开启' if self._send_cfg.get('screenshot_pdf') else '关闭'}",
             f"📎 附带 PDF: {'开启' if self._send_cfg.get('attach_pdf') else '关闭'}",

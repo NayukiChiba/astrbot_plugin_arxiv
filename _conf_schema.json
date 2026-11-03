@@ -65,6 +65,25 @@
         "type": "string",
         "default": "ArXiv Bot"
       },
+      "text_format": {
+        "description": "文本格式",
+        "type": "string",
+        "options": ["auto", "plain", "markdown"],
+        "hint": "auto: QQ 官方机器人平台自动使用 Markdown，其他平台使用纯文本; plain: 始终纯文本; markdown: 始终 Markdown（仅 QQ 官方平台支持渲染）。",
+        "default": "auto"
+      },
+      "send_as_image": {
+        "description": "按图发送",
+        "type": "bool",
+        "hint": "开启后将论文元信息、摘要与 AI 总结合并渲染为一张卡片图片发送（依赖 AstrBot t2i 文转图服务）。PDF 附件仍单独发送。",
+        "default": false
+      },
+      "image_template": {
+        "description": "卡片模板",
+        "type": "string",
+        "hint": "按图发送使用的 HTML 模板文件名（不含 .html 后缀）。模板目录为插件数据目录下的 templates/，可在其中添加自定义模板。",
+        "default": "default"
+      },
       "send_abstract": {
         "description": "发送论文摘要",
         "type": "bool",

@@ -12,6 +12,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 - **关键词标签** — 支持自定义关键词标签进行模糊匹配
 - **目标会话** — 支持 UMO 会话列表，可通过指令快捷添加/移除
 - **发送模式** — 支持合并转发和逐条发送两种模式
+- **Markdown 适配** — QQ 官方机器人平台自动使用 Markdown 语法（标题、加粗、超链接）发送
+- **按图发送** — 论文元信息、摘要与 AI 总结可合并渲染为一张 HTML 卡片图片发送
 - **PDF 截图** — PDF 首页截图，DPI 可自由调整
 - **PDF 附件** — 可选附带 PDF 文件
 - **摘要处理** — 支持原文摘要或 LLM 翻译为中文
@@ -79,6 +81,9 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | target_sessions | list | `[]` | 目标 UMO 会话列表 |
 | use_forward | bool | `false` | 是否使用合并转发 |
 | bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人名称 |
+| text_format | string | `"auto"` | 文本格式：`auto`（QQ 官方平台自动用 Markdown）/ `plain` / `markdown` |
+| send_as_image | bool | `false` | 按图发送：整篇论文渲染为一张卡片图片（依赖 t2i 文转图服务） |
+| image_template | string | `"default"` | 卡片模板文件名（不含 .html 后缀），见下方「自定义卡片模板」 |
 | send_abstract | bool | `true` | 是否发送摘要 |
 | abstract_as_image | bool | `true` | 摘要是否渲染为图片 |
 | attach_pdf | bool | `true` | 是否附带 PDF 文件 |
@@ -96,6 +101,29 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | translate_provider_id | string | `""` | 摘要翻译 LLM 提供商（留空使用默认，可用小模型） |
 | summarize_provider_id | string | `""` | 论文总结 LLM 提供商（需多模态视觉模型，留空使用默认） |
 | llm_summary_prompt | text | `""` | 自定义 LLM 总结 prompt |
+
+## 自定义卡片模板
+
+按图发送（`send_as_image`）使用 HTML + Jinja2 模板渲染论文卡片。插件首次启动时会把内置模板复制到**插件数据目录**下的 `templates/` 文件夹（如 `data/plugin_data/astrbot_plugin_arxiv/templates/`），不会覆盖已有文件：
+
+- 修改 `default.html` 可调整默认卡片样式
+- 添加自己的 `.html` 模板文件后，将 `image_template` 配置为文件名（不含后缀）即可启用
+
+模板中可用的 Jinja2 变量：
+
+| 变量 | 说明 |
+|------|------|
+| `index` | 论文序号（0 表示无序号） |
+| `category` | 主分类，如 `cs.AI / 人工智能` |
+| `title_html` / `authors_html` | 标题 / 作者（已转义，需配合 `\| safe`） |
+| `published` | 提交日期 |
+| `tags` | 全部分类标签（单分类时为空） |
+| `arxiv_id` / `abs_url` | arXiv ID / 详情页链接 |
+| `abstract_html` | 摘要（已转义，可为空） |
+| `summary_html` | AI 总结（已转义，可为空） |
+| `summary_failure` | 是否识图失败（布尔值） |
+| `screenshot_b64` | PDF 首页截图 Base64（可为空） |
+| `extra_html` | 额外提示，如 PDF 跳过原因（已转义） |
 
 ## 依赖
 

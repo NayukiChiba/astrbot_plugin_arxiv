@@ -33,9 +33,7 @@ class PdfSizeExceededError(Exception):
         self.max_bytes = max_bytes
         size_mb = actual_bytes / (1024 * 1024)
         limit_mb = max_bytes / (1024 * 1024)
-        super().__init__(
-            f"PDF 大小 ({size_mb:.1f} MB) 超出限制 ({limit_mb:.0f} MB)"
-        )
+        super().__init__(f"PDF 大小 ({size_mb:.1f} MB) 超出限制 ({limit_mb:.0f} MB)")
 
 
 _MIRROR_PING_TIMEOUT = 5  # 镜像测速超时（秒）
