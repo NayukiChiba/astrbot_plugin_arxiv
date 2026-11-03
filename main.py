@@ -22,9 +22,11 @@ from . import (
     llm_service,
     pdf_handler,
     text_render,
+    web_api,
 )
 from .arxiv_client import extractArxivId
 from .history import SentHistory
+from .paper_store import PaperStore
 
 # 定时任务在 AstrBot 数据库中的唯一名称，用于去重
 _CRON_JOB_NAME = "arxiv_daily_push"
@@ -66,7 +68,7 @@ def _time_to_cron(time_str: str) -> str:
     "astrbot_plugin_arxiv",
     "NayukiChiba",
     "ArXiv 论文搜索与定时推送插件",
-    "1.1.0",
+    "1.2.0",
 )
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
@@ -77,6 +79,7 @@ class ArxivPlugin(Star):
         self._data_dir: Path = Path()
         self._temp_dir: Path = Path()
         self._history: SentHistory | None = None
+        self._paper_store: PaperStore | None = None
         self._cron_job_id: str = ""
         self._bestMirror: str = ""
 
@@ -97,6 +100,11 @@ class ArxivPlugin(Star):
         """获取 LLM 赋能配置。"""
         return self.config.get("llm_config", {})
 
+    @property
+    def _paper_store_enabled(self) -> bool:
+        """是否持久化存储已发送论文与 PDF（供 WebUI 浏览）。"""
+        return self._send_cfg.get("store_papers", True)
+
     # ── 生命周期 ──────────────────────────────────────────────
 
     async def initialize(self) -> None:
@@ -113,10 +121,27 @@ class ArxivPlugin(Star):
         retention = self._send_cfg.get("history_retention_days", 30)
         self._history = SentHistory(self._data_dir, retention_days=retention)
 
+        # 初始化论文库（WebUI 浏览已发送论文与 PDF）。
+        # 数据保存在 data/plugin_data/astrbot_plugin_arxiv/papers/ 下。
+        paper_retention = self._send_cfg.get("paper_retention_days", 7)
+        self._paper_store = PaperStore(self._data_dir, retention_days=paper_retention)
+        if self._paper_store_enabled:
+            removed_papers = self._paper_store.cleanup_old()
+            if removed_papers > 0:
+                logger.info("已清理 %d 条过期的论文库记录。", removed_papers)
+        else:
+            # 关闭存储时清空已存储的论文与 PDF
+            cleared = self._paper_store.clear_all()
+            if cleared > 0:
+                logger.info("论文存储已关闭，已清空 %d 条论文库记录。", cleared)
+
         # 清理过期记录
         removed = self._history.cleanup_old()
         if removed > 0:
             logger.info("已清理 %d 条过期的论文发送记录。", removed)
+
+        # 注册 WebUI 页面 API
+        web_api.register_web_routes(self)
 
         # 测速选择最优 PDF 镜像站
         mirrors = self._arxiv_cfg.get("pdf_mirrors", ["https://arxiv.org"])
@@ -238,7 +263,24 @@ class ArxivPlugin(Star):
         if not chains:
             return
 
-        # 根据配置的模式发送
+        await self._deliver_chains(session, chains)
+
+        # 标记为已发送并记录到论文库（供 WebUI 浏览）
+        self._history.mark_sent_batch(
+            session,
+            [p.arxiv_id for p in unsent_papers],
+        )
+        if self._paper_store and self._paper_store_enabled:
+            for paper in unsent_papers:
+                self._paper_store.record(paper, session)
+        logger.info(
+            "ArXiv 推送至 %s：成功发送 %d 篇论文。",
+            session,
+            len(unsent_papers),
+        )
+
+    async def _deliver_chains(self, session: str, chains: list[MessageChain]) -> None:
+        """按配置的发送模式（合并转发或逐条）将消息链发送到会话。"""
         use_forward = self._send_cfg.get("use_forward", True)
         if use_forward:
             bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
@@ -263,17 +305,6 @@ class ArxivPlugin(Star):
                     await self.context.send_message(session, chain)
                 except Exception:
                     logger.exception("论文消息发送失败 (%s)。", session)
-
-        # 标记为已发送
-        self._history.mark_sent_batch(
-            session,
-            [p.arxiv_id for p in unsent_papers],
-        )
-        logger.info(
-            "ArXiv 推送至 %s：成功发送 %d 篇论文。",
-            session,
-            len(unsent_papers),
-        )
 
     @staticmethod
     def _make_result(chain: MessageChain) -> MessageEventResult:
@@ -306,13 +337,45 @@ class ArxivPlugin(Star):
             event.get_platform_name(),
         )
 
+    def text_format_for_session(self, session: str, override: str = "auto") -> str:
+        """解析指定会话应使用的文本格式。
+
+        Args:
+            session: 目标 UMO 会话。
+            override: WebUI 传入的覆盖值；"auto" 表示跟随插件配置。
+
+        Returns:
+            "plain" 或 "markdown"。
+        """
+        cfg_fmt = self._send_cfg.get("text_format", "auto")
+        fmt = cfg_fmt if override == "auto" else override
+        return _resolve_text_format(fmt, self._resolve_platform_name(session))
+
+    def list_card_templates(self) -> list[str]:
+        """列出可用的卡片模板名（用户目录与内置目录的并集）。"""
+        names: set[str] = set()
+        for directory in (
+            self._data_dir / "templates",
+            image_render.BUILTIN_TEMPLATE_DIR,
+        ):
+            if directory.is_dir():
+                names.update(p.stem for p in directory.glob("*.html"))
+        return sorted(names)
+
     async def _process_papers(
         self,
         papers: list[arxiv_client.ArxivPaper],
         *,
         text_format: str = "plain",
+        send_as_image: bool | None = None,
     ) -> list[MessageChain]:
-        """处理论文列表，生成消息链。"""
+        """处理论文列表，生成消息链。
+
+        Args:
+            papers: 论文列表。
+            text_format: 文本格式（plain / markdown）。
+            send_as_image: 覆盖按图发送配置，None 时跟随配置。
+        """
         logger.info("开始处理 %d 篇论文。", len(papers))
         chains: list[MessageChain] = []
 
@@ -323,6 +386,7 @@ class ArxivPlugin(Star):
                     paper,
                     index=i,
                     text_format=text_format,
+                    send_as_image=send_as_image,
                 )
                 chains.extend(paper_chains)
                 logger.info(
@@ -342,6 +406,7 @@ class ArxivPlugin(Star):
         *,
         index: int = 0,
         text_format: str = "plain",
+        send_as_image: bool | None = None,
     ) -> list[MessageChain]:
         """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。"""
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
@@ -349,7 +414,9 @@ class ArxivPlugin(Star):
         summary_text = ""
         screenshot_path = ""
         pdf_path_str = ""
-        send_as_image = self._send_cfg.get("send_as_image", False)
+        # send_as_image 为 None 时跟随配置，否则使用调用方覆盖值（WebUI 测试用）
+        if send_as_image is None:
+            send_as_image = self._send_cfg.get("send_as_image", False)
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -380,10 +447,17 @@ class ArxivPlugin(Star):
         pdf_skip_reason: str = ""
         if need_pdf and paper.pdf_url:
             logger.info("[%s] 下载 PDF: %s", paper.arxiv_id, paper.pdf_url)
+            # 开启存储时 PDF 下载到论文库目录持久化保存，供 WebUI 在线查看；
+            # 关闭时下载到临时目录，随插件卸载清理
+            download_dir = (
+                self._paper_store.papers_dir
+                if self._paper_store and self._paper_store_enabled
+                else self._temp_dir
+            )
             try:
                 downloaded_pdf = await pdf_handler.download_pdf(
                     paper.pdf_url,
-                    self._temp_dir,
+                    download_dir,
                     timeout=timeout,
                     max_size_mb=max_pdf_size,
                     best_mirror=self._bestMirror,

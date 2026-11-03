@@ -14,6 +14,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 - **发送模式** — 支持合并转发和逐条发送两种模式
 - **Markdown 适配** — QQ 官方机器人平台自动使用 Markdown 语法（标题、加粗、超链接）发送
 - **按图发送** — 论文元信息、摘要与 AI 总结可合并渲染为一张 HTML 卡片图片发送
+- **WebUI 控制台** — 插件页面查看已发送论文、下载 PDF、手动获取 / 预览 / 发送论文
+- **论文库存储** — 已发送论文与 PDF 可保存到插件数据目录，支持按保留天数自动清理
 - **PDF 截图** — PDF 首页截图，DPI 可自由调整
 - **PDF 附件** — 可选附带 PDF 文件
 - **摘要处理** — 支持原文摘要或 LLM 翻译为中文
@@ -91,6 +93,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | screenshot_dpi | int | `150` | 截图 DPI（72~300） |
 | max_pdf_size_mb | int | `20` | PDF 最大体积限制 (MB) |
 | history_retention_days | int | `30` | 定时推送去重记录保留天数 |
+| store_papers | bool | `true` | 是否保存已发送论文与 PDF 到论文库（WebUI 可查看）；关闭时启动自动清空 |
+| paper_retention_days | int | `7` | 论文库保留天数，过期记录与 PDF 自动清理 |
 
 ### LLM 赋能配置
 
@@ -101,6 +105,25 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | translate_provider_id | string | `""` | 摘要翻译 LLM 提供商（留空使用默认，可用小模型） |
 | summarize_provider_id | string | `""` | 论文总结 LLM 提供商（需多模态视觉模型，留空使用默认） |
 | llm_summary_prompt | text | `""` | 自定义 LLM 总结 prompt |
+
+## WebUI 控制台
+
+插件注册「ArXiv 控制台」页面，入口在 AstrBot Dashboard 侧边栏的扩展功能区（iframe 嵌入）。
+
+**论文库** 标签页：
+
+- 展示所有已发送论文（发送时间倒序），包括标题、作者、分区、发送时间与目标会话数
+- 支持展开摘要、下载已保存的 PDF、跳转 arXiv 详情页
+- 顶栏显示存储状态（保留天数、篇数、占用空间），「立即清理」按钮手动清理过期内容
+
+**获取与发送** 标签页：
+
+- 三种获取模式：最新论文（按配置分类）、关键词搜索、按 ID / 链接
+- 选中论文后可预览纯文本 / Markdown / 卡片图片三种发送样式
+- 可指定目标会话 UMO（自动识别平台类型）、文本格式、按图发送与是否包含摘要，点击「发送到会话」执行完整发送流程（含 PDF 下载与论文库记录）
+- 「触发推送」按钮立即执行一次定时推送，便于测试
+
+论文库内容保存在插件数据目录 `data/plugin_data/astrbot_plugin_arxiv/papers/`，由 `store_papers` 与 `paper_retention_days` 配置控制。
 
 ## 自定义卡片模板
 
