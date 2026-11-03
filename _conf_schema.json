@@ -117,6 +117,18 @@
         "hint": "超出此大小的 PDF 将被跳过。",
         "default": 20
       },
+      "store_papers": {
+        "description": "存储已发送论文与 PDF",
+        "type": "bool",
+        "hint": "开启后将已发送论文的元数据与 PDF 保存到插件数据目录，供 WebUI 页面浏览。关闭后不再存储，并在启动时清空已存储的内容。",
+        "default": true
+      },
+      "paper_retention_days": {
+        "description": "论文库保留天数",
+        "type": "int",
+        "hint": "已发送论文与 PDF 的保留天数，超过后自动清理。",
+        "default": 7
+      },
       "history_retention_days": {
         "description": "已发送记录保留天数",
         "type": "int",

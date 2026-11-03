@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ArXiv 控制台</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>📚 ArXiv 控制台</h1>
+      <div id="status-badges" class="badges"></div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="library">论文库</button>
+      <button class="tab" data-tab="fetcher">获取与发送</button>
+    </nav>
+
+    <!-- ── 论文库 ─────────────────────────────── -->
+    <section id="tab-library" class="tab-page">
+      <div class="panel">
+        <div class="panel-row">
+          <span id="storage-info" class="muted">加载中…</span>
+          <span class="spacer"></span>
+          <button id="btn-cleanup" class="btn">立即清理</button>
+          <button id="btn-reload-library" class="btn">刷新</button>
+        </div>
+        <div id="library-list" class="paper-grid"></div>
+        <div id="library-empty" class="empty hidden">
+          暂无论文记录。论文通过定时推送或「获取与发送」手动发送后会出现在这里。
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 获取与发送 ─────────────────────────── -->
+    <section id="tab-fetcher" class="tab-page hidden">
+      <div class="panel">
+        <div class="panel-row wrap">
+          <select id="fetch-mode" class="input">
+            <option value="latest">最新论文（按配置分类）</option>
+            <option value="search">关键词搜索</option>
+            <option value="id">按 ID / 链接</option>
+          </select>
+          <input
+            id="fetch-query"
+            class="input grow"
+            placeholder="关键词或 arXiv ID / 链接（最新模式留空）"
+          />
+          <input id="fetch-count" class="input num" type="number" min="1" max="20" value="3" title="数量" />
+          <button id="btn-fetch" class="btn primary">获取论文</button>
+          <button id="btn-trigger" class="btn warn" title="立即执行一次定时推送">触发推送</button>
+        </div>
+
+        <div class="split">
+          <div id="fetch-list" class="fetch-list">
+            <div class="empty">点击「获取论文」加载论文列表</div>
+          </div>
+
+          <div id="preview-pane" class="preview hidden">
+            <div id="preview-title" class="preview-title"></div>
+            <div class="tabs small">
+              <button class="ptab active" data-ptab="plain">纯文本</button>
+              <button class="ptab" data-ptab="markdown">Markdown</button>
+              <button class="ptab" data-ptab="image">卡片图片</button>
+            </div>
+            <pre id="preview-text" class="preview-text"></pre>
+            <div id="preview-image-wrap" class="hidden center">
+              <img id="preview-image" alt="卡片预览" />
+            </div>
+
+            <div class="send-form">
+              <label>
+                目标会话
+                <input id="send-session" class="input" list="session-list" placeholder="aiocqhttp:GroupMessage:123456" />
+                <datalist id="session-list"></datalist>
+              </label>
+              <div id="session-platform" class="muted"></div>
+              <label>
+                文本格式
+                <select id="send-format" class="input">
+                  <option value="auto">auto（跟随配置）</option>
+                  <option value="plain">plain</option>
+                  <option value="markdown">markdown</option>
+                </select>
+              </label>
+              <label class="check">
+                <input id="send-as-image" type="checkbox" />
+                按图发送（渲染卡片图片）
+              </label>
+              <label class="check">
+                <input id="send-abstract" type="checkbox" checked />
+                包含摘要
+              </label>
+              <div class="panel-row">
+                <button id="btn-preview" class="btn">预览样式</button>
+                <button id="btn-send" class="btn primary">发送到会话</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
