@@ -11,8 +11,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 - **学科分类筛选** — 支持选择 arXiv 学科分类（cs.AI、cs.LG、math.CO 等）
 - **关键词标签** — 支持自定义关键词标签进行模糊匹配
 - **目标会话** — 支持 UMO 会话列表，可通过指令快捷添加/移除
-- **发送模式** — 支持合并转发和逐条发送两种模式
-- **Markdown 适配** — QQ 官方机器人平台自动使用 Markdown 语法（标题、加粗、超链接）发送
+- **发送模式** — 合并转发（仅 aiocqhttp）和逐条发送，按目标平台自动适配
+- **平台适配** — 文本格式、合并转发等按平台类型独立配置，QQ 官方机器人默认 Markdown
 - **按图发送** — 论文元信息、摘要与 AI 总结可合并渲染为一张 HTML 卡片图片发送
 - **WebUI 控制台** — 插件页面查看已发送论文、下载 PDF、手动获取 / 预览 / 发送论文
 - **论文库存储** — 已发送论文与 PDF 可保存到插件数据目录，支持按保留天数自动清理
@@ -62,7 +62,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 
 ## 配置说明
 
-所有配置项都可以在 AstrBot WebUI 的插件管理面板中修改，分为三大组：
+所有配置项都可以在 AstrBot WebUI 的插件管理面板中修改，分为六个分组（旧版配置启动时自动迁移到新结构）：
 
 ### ArXiv 论文配置
 
@@ -74,16 +74,21 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | pdf_mirrors | list | `["https://arxiv.org", "https://cn.arxiv.org"]` | PDF 下载镜像站列表，启动时自动测速选最快 |
 | timeout_seconds | int | `30` | HTTP 请求超时 (秒) |
 
-### 发送配置
+### 定时推送
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | push_time | string | `"09:00"` | 每日推送时间（HH:MM） |
 | push_timezone | string | `"Asia/Shanghai"` | 时区 |
 | target_sessions | list | `[]` | 目标 UMO 会话列表 |
-| use_forward | bool | `false` | 是否使用合并转发 |
-| bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人名称 |
-| text_format | string | `"auto"` | 文本格式：`auto`（QQ 官方平台自动用 Markdown）/ `plain` / `markdown` |
+| history_retention_days | int | `30` | 定时推送去重记录保留天数 |
+
+### 发送内容
+
+对所有平台生效的内容开关。部分配置项仅在相关功能开启时显示（如卡片模板仅在按图发送时显示）。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
 | send_as_image | bool | `false` | 按图发送：整篇论文渲染为一张卡片图片（依赖 t2i 文转图服务） |
 | image_template | string | `"default"` | 卡片模板文件名（不含 .html 后缀），见下方「自定义卡片模板」 |
 | send_abstract | bool | `true` | 是否发送摘要 |
@@ -92,9 +97,33 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 | screenshot_pdf | bool | `true` | 是否截图 PDF 首页 |
 | screenshot_dpi | int | `150` | 截图 DPI（72~300） |
 | max_pdf_size_mb | int | `20` | PDF 最大体积限制 (MB) |
-| history_retention_days | int | `30` | 定时推送去重记录保留天数 |
+
+### 平台适配
+
+按平台类型分别配置发送行为。「默认」对未单独配置的平台生效；QQ 官方机器人（qqofficial / qqofficial_webhook）共用同一配置块。
+
+| 平台配置块 | 配置项 | 类型 | 默认值 | 说明 |
+|------------|--------|------|--------|------|
+| default（其他平台） | text_format | string | `"plain"` | 文本格式：`plain` / `markdown`（需平台支持渲染） |
+| aiocqhttp（OneBot v11） | use_forward | bool | `false` | 是否使用合并转发（仅 aiocqhttp 支持） |
+| aiocqhttp | bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人昵称（开启合并转发时显示） |
+| qqofficial（含 webhook） | text_format | string | `"markdown"` | QQ 官方机器人支持 Markdown 渲染 |
+
+**机器人实例单独适配**：在 `instances` 中添加条目，填写机器人实例 ID（UMO 第一段，可在「机器人」页面查看），即可为该实例单独覆盖文本格式与合并转发设置，优先级高于平台类型配置。
+
+发送时的强制规则（不受配置影响）：
+
+- **aiocqhttp 始终纯文本**，不提供文本格式设置（实例条目中的文本格式对 aiocqhttp 实例同样不生效）
+- **合并转发仅 aiocqhttp 支持**，其他平台始终逐条发送
+
+设置生效优先级：机器人实例条目 > 平台类型配置 > 默认配置。
+
+### 论文库存储
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
 | store_papers | bool | `true` | 是否保存已发送论文与 PDF 到论文库（WebUI 可查看）；关闭时启动自动清空 |
-| paper_retention_days | int | `7` | 论文库保留天数，过期记录与 PDF 自动清理 |
+| paper_retention_days | int | `7` | 论文库保留天数，过期记录与 PDF 自动清理（仅在开启存储时显示） |
 
 ### LLM 赋能配置
 

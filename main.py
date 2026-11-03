@@ -32,21 +32,16 @@ from .paper_store import PaperStore
 _CRON_JOB_NAME = "arxiv_daily_push"
 
 
-def _resolve_text_format(fmt: str, platform_name: str) -> str:
-    """根据配置与平台类型决定文本格式。
+def _normalize_text_format(fmt: str) -> str:
+    """规范化文本格式配置值。
 
     Args:
-        fmt: 配置项 text_format 的值（auto / plain / markdown）。
-        platform_name: 平台类型名，如 aiocqhttp、qqofficial_webhook。
+        fmt: 配置项 text_format 的值。
 
     Returns:
-        "plain" 或 "markdown"。auto 模式下仅 QQ 官方平台使用 markdown。
+        "plain" 或 "markdown"，非法值回退为 "plain"。
     """
-    if fmt == "auto":
-        return "markdown" if platform_name.startswith("qqofficial") else "plain"
-    if fmt in ("plain", "markdown"):
-        return fmt
-    return "plain"
+    return fmt if fmt in ("plain", "markdown") else "plain"
 
 
 def _time_to_cron(time_str: str) -> str:
@@ -68,7 +63,7 @@ def _time_to_cron(time_str: str) -> str:
     "astrbot_plugin_arxiv",
     "NayukiChiba",
     "ArXiv 论文搜索与定时推送插件",
-    "1.2.0",
+    "1.3.0",
 )
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
@@ -92,8 +87,18 @@ class ArxivPlugin(Star):
 
     @property
     def _send_cfg(self) -> dict:
-        """获取发送配置。"""
+        """获取发送内容配置。"""
         return self.config.get("send_config", {})
+
+    @property
+    def _push_cfg(self) -> dict:
+        """获取定时推送配置。"""
+        return self.config.get("push_config", {})
+
+    @property
+    def _storage_cfg(self) -> dict:
+        """获取论文库存储配置。"""
+        return self.config.get("storage_config", {})
 
     @property
     def _llm_cfg(self) -> dict:
@@ -103,12 +108,122 @@ class ArxivPlugin(Star):
     @property
     def _paper_store_enabled(self) -> bool:
         """是否持久化存储已发送论文与 PDF（供 WebUI 浏览）。"""
-        return self._send_cfg.get("store_papers", True)
+        return self._storage_cfg.get("store_papers", True)
+
+    def _platform_settings(self, platform_name: str, platform_id: str = "") -> dict:
+        """获取指定平台的发送设置。
+
+        合并顺序：默认配置 < 平台类型配置 < 机器人实例条目（优先级最高）。
+        qqofficial_webhook 与 qqofficial 共用 QQ 官方配置块。
+
+        强制规则（不受配置影响）：
+        - aiocqhttp 仅支持纯文本，text_format 始终为 plain；
+        - 合并转发仅 aiocqhttp 支持，其他平台 use_forward 始终为 False。
+
+        Args:
+            platform_name: 平台类型名，如 aiocqhttp、qqofficial_webhook。
+            platform_id: 平台实例 ID（UMO 第一段），用于匹配实例级适配条目。
+
+        Returns:
+            合并后的平台设置字典，含 text_format、use_forward 等键。
+        """
+        platform_cfg = self.config.get("platform_config", {})
+        settings = dict(platform_cfg.get("default", {}))
+        key = "qqofficial" if platform_name.startswith("qqofficial") else platform_name
+        settings.update(platform_cfg.get(key, {}))
+
+        # 实例级适配条目覆盖平台类型配置
+        for entry in platform_cfg.get("instances", []):
+            if platform_id and entry.get("platform_instance") == platform_id:
+                settings.update(
+                    {
+                        k: v
+                        for k, v in entry.items()
+                        if k not in ("platform_instance", "__template_key")
+                    }
+                )
+
+        if platform_name == "aiocqhttp":
+            settings["text_format"] = "plain"
+        else:
+            settings["use_forward"] = False
+        return settings
+
+    def _settings_for_event(self, event: AstrMessageEvent) -> dict:
+        """获取事件所属平台实例的生效发送设置。"""
+        return self._platform_settings(
+            event.get_platform_name(),
+            event.unified_msg_origin.split(":", 1)[0],
+        )
+
+    def _settings_for_session(self, session: str) -> dict:
+        """获取目标会话所属平台实例的生效发送设置。"""
+        return self._platform_settings(
+            self._resolve_platform_name(session),
+            session.split(":", 1)[0],
+        )
+
+    # ── 配置迁移 ─────────────────────────────────────────────
+
+    def _migrate_config(self) -> None:
+        """将 v1.2.x 及更早的旧配置键迁移到 v1.3.0 的分组结构。
+
+        AstrBot 启动时会用 schema 默认值补齐新配置组，因此旧键存在
+        即代表未迁移的旧配置，直接覆盖对应新键并删除旧键。迁移成功
+        后保存一次，后续启动不再触发（幂等）。
+        """
+        send_cfg = self.config.get("send_config", {})
+        if not isinstance(send_cfg, dict):
+            return
+
+        moved = False
+        # 平面迁移：定时推送与论文库存储配置组
+        for key, group in (
+            ("push_time", "push_config"),
+            ("push_timezone", "push_config"),
+            ("target_sessions", "push_config"),
+            ("history_retention_days", "push_config"),
+            ("store_papers", "storage_config"),
+            ("paper_retention_days", "storage_config"),
+        ):
+            if key in send_cfg:
+                self.config.setdefault(group, {})[key] = send_cfg.pop(key)
+                moved = True
+
+        # 合并转发仅 aiocqhttp 支持，迁入 aiocqhttp 平台配置块
+        for key in ("use_forward", "bot_name"):
+            if key in send_cfg:
+                platform_cfg = self.config.setdefault("platform_config", {})
+                platform_cfg.setdefault("aiocqhttp", {})[key] = send_cfg.pop(key)
+                moved = True
+
+        if "text_format" in send_cfg:
+            old_fmt = send_cfg.pop("text_format")
+            # 旧 auto 的效果与新结构默认值一致（QQ 官方 markdown、其他 plain），
+            # 无需迁移；显式的 plain/markdown 迁移为全局默认格式
+            if old_fmt in ("plain", "markdown"):
+                platform_cfg = self.config.setdefault("platform_config", {})
+                platform_cfg.setdefault("default", {})["text_format"] = old_fmt
+            moved = True
+
+        if not moved:
+            return
+
+        self.config["send_config"] = send_cfg
+        try:
+            self.config.save_config()
+        except AttributeError:
+            pass  # 测试环境 config 为普通 dict，无 save_config
+        except Exception:
+            logger.exception("保存迁移后的插件配置失败。")
+        logger.info("已将旧版配置迁移到 v1.3.0 的分组结构。")
 
     # ── 生命周期 ──────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """插件初始化：加载历史、设置定时任务、测速选择最优镜像。"""
+        """插件初始化：迁移配置、加载历史、设置定时任务、测速选择最优镜像。"""
+        self._migrate_config()
+
         # 初始化数据目录
         self._data_dir = StarTools.get_data_dir("astrbot_plugin_arxiv")
         self._temp_dir = self._data_dir / "temp"
@@ -118,12 +233,12 @@ class ArxivPlugin(Star):
         image_render.install_builtin_templates(self._data_dir / "templates")
 
         # 初始化已发送历史
-        retention = self._send_cfg.get("history_retention_days", 30)
+        retention = self._push_cfg.get("history_retention_days", 30)
         self._history = SentHistory(self._data_dir, retention_days=retention)
 
         # 初始化论文库（WebUI 浏览已发送论文与 PDF）。
         # 数据保存在 data/plugin_data/astrbot_plugin_arxiv/papers/ 下。
-        paper_retention = self._send_cfg.get("paper_retention_days", 7)
+        paper_retention = self._storage_cfg.get("paper_retention_days", 7)
         self._paper_store = PaperStore(self._data_dir, retention_days=paper_retention)
         if self._paper_store_enabled:
             removed_papers = self._paper_store.cleanup_old()
@@ -182,8 +297,8 @@ class ArxivPlugin(Star):
         """
         await self._cleanup_duplicate_jobs()
 
-        push_time = self._send_cfg.get("push_time", "09:00")
-        timezone = self._send_cfg.get("push_timezone", "Asia/Shanghai")
+        push_time = self._push_cfg.get("push_time", "09:00")
+        timezone = self._push_cfg.get("push_timezone", "Asia/Shanghai")
         cron_expr = _time_to_cron(push_time)
 
         try:
@@ -209,7 +324,7 @@ class ArxivPlugin(Star):
 
     async def _scheduled_push(self) -> None:
         """定时推送入口：获取最新论文并发送到所有目标会话。"""
-        target_sessions: list[str] = self._send_cfg.get("target_sessions", [])
+        target_sessions: list[str] = self._push_cfg.get("target_sessions", [])
         if not target_sessions:
             logger.info("ArXiv 定时推送：未配置目标会话，跳过。")
             return
@@ -252,12 +367,8 @@ class ArxivPlugin(Star):
             logger.info("ArXiv 推送至 %s：无新论文。", session)
             return
 
-        # 处理每篇论文（按目标平台决定文本格式）
-        platform_name = self._resolve_platform_name(session)
-        text_format = _resolve_text_format(
-            self._send_cfg.get("text_format", "auto"),
-            platform_name,
-        )
+        # 处理每篇论文（按目标平台配置决定文本格式）
+        text_format = self.text_format_for_session(session)
         chains = await self._process_papers(unsent_papers, text_format=text_format)
 
         if not chains:
@@ -280,10 +391,11 @@ class ArxivPlugin(Star):
         )
 
     async def _deliver_chains(self, session: str, chains: list[MessageChain]) -> None:
-        """按配置的发送模式（合并转发或逐条）将消息链发送到会话。"""
-        use_forward = self._send_cfg.get("use_forward", True)
+        """按目标会话所属平台的配置（合并转发或逐条）发送消息链。"""
+        platform_cfg = self._settings_for_session(session)
+        use_forward = platform_cfg.get("use_forward", False)
         if use_forward:
-            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+            bot_name = platform_cfg.get("bot_name", "ArXiv Bot")
             forwardMsg, fileChains = formatter.build_forward_nodes(
                 chains,
                 bot_name=bot_name,
@@ -331,25 +443,27 @@ class ArxivPlugin(Star):
         return platform_id
 
     def _text_format_for_event(self, event: AstrMessageEvent) -> str:
-        """根据事件所属平台决定文本格式（plain 或 markdown）。"""
-        return _resolve_text_format(
-            self._send_cfg.get("text_format", "auto"),
-            event.get_platform_name(),
-        )
+        """根据事件所属平台实例的配置决定文本格式（plain 或 markdown）。"""
+        settings = self._settings_for_event(event)
+        return _normalize_text_format(settings.get("text_format", "plain"))
 
     def text_format_for_session(self, session: str, override: str = "auto") -> str:
         """解析指定会话应使用的文本格式。
 
         Args:
             session: 目标 UMO 会话。
-            override: WebUI 传入的覆盖值；"auto" 表示跟随插件配置。
+            override: WebUI 传入的覆盖值（plain / markdown）；
+                "auto" 表示跟随会话所属平台实例的配置。
 
         Returns:
-            "plain" 或 "markdown"。
+            "plain" 或 "markdown"。aiocqhttp 会话始终为 plain。
         """
-        cfg_fmt = self._send_cfg.get("text_format", "auto")
-        fmt = cfg_fmt if override == "auto" else override
-        return _resolve_text_format(fmt, self._resolve_platform_name(session))
+        if self._resolve_platform_name(session) == "aiocqhttp":
+            return "plain"
+        if override != "auto":
+            return _normalize_text_format(override)
+        settings = self._settings_for_session(session)
+        return _normalize_text_format(settings.get("text_format", "plain"))
 
     def list_card_templates(self) -> list[str]:
         """列出可用的卡片模板名（用户目录与内置目录的并集）。"""
@@ -793,9 +907,9 @@ class ArxivPlugin(Star):
             text_format=self._text_format_for_event(event),
         )
 
-        use_forward = self._send_cfg.get("use_forward", True)
-        if use_forward:
-            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+        platform_cfg = self._settings_for_event(event)
+        if platform_cfg.get("use_forward", False):
+            bot_name = platform_cfg.get("bot_name", "ArXiv Bot")
             forwardMsg, fileChains = formatter.build_forward_nodes(
                 chains, bot_name=bot_name
             )
@@ -859,9 +973,9 @@ class ArxivPlugin(Star):
             yield event.plain_result("📭 处理论文时出错。")
             return
 
-        use_forward = self._send_cfg.get("use_forward", True)
-        if use_forward:
-            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+        platform_cfg = self._settings_for_event(event)
+        if platform_cfg.get("use_forward", False):
+            bot_name = platform_cfg.get("bot_name", "ArXiv Bot")
             forwardMsg, fileChains = formatter.build_forward_nodes(
                 chains, bot_name=bot_name
             )
@@ -911,9 +1025,9 @@ class ArxivPlugin(Star):
             text_format=self._text_format_for_event(event),
         )
 
-        use_forward = self._send_cfg.get("use_forward", True)
-        if use_forward:
-            bot_name = self._send_cfg.get("bot_name", "ArXiv Bot")
+        platform_cfg = self._settings_for_event(event)
+        if platform_cfg.get("use_forward", False):
+            bot_name = platform_cfg.get("bot_name", "ArXiv Bot")
             forwardMsg, fileChains = formatter.build_forward_nodes(
                 chains, bot_name=bot_name
             )
@@ -936,22 +1050,17 @@ class ArxivPlugin(Star):
         """显示插件当前配置和状态。"""
         categories = self._arxiv_cfg.get("categories", [])
         tags = self._arxiv_cfg.get("tags", [])
-        push_time = self._send_cfg.get("push_time", "09:00")
-        timezone = self._send_cfg.get("push_timezone", "Asia/Shanghai")
-        targets = self._send_cfg.get("target_sessions", [])
-        use_forward = self._send_cfg.get("use_forward", True)
+        push_time = self._push_cfg.get("push_time", "09:00")
+        timezone = self._push_cfg.get("push_timezone", "Asia/Shanghai")
+        targets = self._push_cfg.get("target_sessions", [])
+        platform_cfg = self._settings_for_event(event)
+        use_forward = platform_cfg.get("use_forward", False)
         abstract_mode = self._llm_cfg.get("abstract_mode", "original")
         max_results = self._arxiv_cfg.get("max_results", 5)
 
         mode_display = "合并转发" if use_forward else "逐条发送"
         abstract_display = "原文" if abstract_mode == "original" else "LLM 中文翻译"
-        text_format_cfg = self._send_cfg.get("text_format", "auto")
-        text_format_display = _resolve_text_format(
-            text_format_cfg,
-            event.get_platform_name(),
-        )
-        if text_format_cfg == "auto":
-            text_format_display = f"auto（当前平台 {text_format_display}）"
+        text_format_display = self._text_format_for_event(event)
 
         lines = [
             "📊 ArXiv 插件状态",
@@ -961,8 +1070,8 @@ class ArxivPlugin(Star):
             f"📄 每次推送: {max_results} 篇",
             f"⏰ 推送时间: {push_time} ({timezone})",
             f"🎯 目标会话: {len(targets)} 个",
-            f"📨 发送模式: {mode_display}",
-            f"🔤 文本格式: {text_format_display}",
+            f"📨 发送模式: {mode_display}（当前平台）",
+            f"🔤 文本格式: {text_format_display}（当前平台）",
             f"🌅 按图发送: {'开启' if self._send_cfg.get('send_as_image') else '关闭'}",
             f"📝 摘要模式: {abstract_display}",
             f"🖼️ PDF 截图: {'开启' if self._send_cfg.get('screenshot_pdf') else '关闭'}",
@@ -977,15 +1086,15 @@ class ArxivPlugin(Star):
         """将当前会话添加为推送目标。用法: /arxiv add_session"""
         umo = event.unified_msg_origin
 
-        send_cfg = self.config.get("send_config", {})
-        targets: list[str] = list(send_cfg.get("target_sessions", []))
+        push_cfg = self.config.get("push_config", {})
+        targets: list[str] = list(push_cfg.get("target_sessions", []))
         if umo in targets:
             yield event.plain_result("ℹ️ 当前会话已在推送列表中。")
             return
 
         targets.append(umo)
-        send_cfg["target_sessions"] = targets
-        self.config["send_config"] = send_cfg
+        push_cfg["target_sessions"] = targets
+        self.config["push_config"] = push_cfg
         self.config.save_config()
 
         yield event.plain_result(f"✅ 已添加当前会话到推送列表。\n会话标识: {umo}")
@@ -995,15 +1104,15 @@ class ArxivPlugin(Star):
         """将当前会话从推送目标中移除。用法: /arxiv remove_session"""
         umo = event.unified_msg_origin
 
-        send_cfg = self.config.get("send_config", {})
-        targets: list[str] = list(send_cfg.get("target_sessions", []))
+        push_cfg = self.config.get("push_config", {})
+        targets: list[str] = list(push_cfg.get("target_sessions", []))
         if umo not in targets:
             yield event.plain_result("ℹ️ 当前会话不在推送列表中。")
             return
 
         targets.remove(umo)
-        send_cfg["target_sessions"] = targets
-        self.config["send_config"] = send_cfg
+        push_cfg["target_sessions"] = targets
+        self.config["push_config"] = push_cfg
         self.config.save_config()
 
         yield event.plain_result("✅ 已从推送列表中移除当前会话。")

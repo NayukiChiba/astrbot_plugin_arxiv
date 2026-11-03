@@ -62,6 +62,7 @@ class ArxivWebAPI:
         """返回插件配置摘要、平台列表、模板列表与存储状态。"""
         plugin = self.plugin
         send_cfg = plugin._send_cfg
+        push_cfg = plugin._push_cfg
 
         platforms = []
         try:
@@ -73,7 +74,7 @@ class ArxivWebAPI:
 
         storage: dict[str, Any] = {
             "enabled": plugin._paper_store_enabled,
-            "retention_days": send_cfg.get("paper_retention_days", 7),
+            "retention_days": plugin._storage_cfg.get("paper_retention_days", 7),
             "count": 0,
             "total_size_bytes": 0,
         }
@@ -88,11 +89,10 @@ class ArxivWebAPI:
                     "categories": plugin._arxiv_cfg.get("categories", []),
                     "tags": plugin._arxiv_cfg.get("tags", []),
                     "max_results": plugin._arxiv_cfg.get("max_results", 5),
-                    "push_time": send_cfg.get("push_time", "09:00"),
-                    "push_timezone": send_cfg.get("push_timezone", "Asia/Shanghai"),
-                    "target_sessions": send_cfg.get("target_sessions", []),
-                    "use_forward": send_cfg.get("use_forward", True),
-                    "text_format": send_cfg.get("text_format", "auto"),
+                    "push_time": push_cfg.get("push_time", "09:00"),
+                    "push_timezone": push_cfg.get("push_timezone", "Asia/Shanghai"),
+                    "target_sessions": push_cfg.get("target_sessions", []),
+                    "platform_config": plugin.config.get("platform_config", {}),
                     "send_as_image": send_cfg.get("send_as_image", False),
                     "image_template": send_cfg.get("image_template", "default"),
                     "send_abstract": send_cfg.get("send_abstract", True),
