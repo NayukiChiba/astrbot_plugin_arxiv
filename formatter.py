@@ -13,7 +13,7 @@ from .arxiv_client import ARXIV_CATEGORIES, ArxivPaper
 from .llm_service import VISION_FAILURE_TEXT
 
 
-def _get_category_display(categories: list[str]) -> str:
+def get_category_display(categories: list[str]) -> str:
     """将分类代码转换为 '代码 / 中文名' 格式。"""
     if not categories:
         return "未知"
@@ -24,6 +24,14 @@ def _get_category_display(categories: list[str]) -> str:
     return primary
 
 
+def format_authors(authors: list[str]) -> str:
+    """格式化作者列表，超过 5 位时截断为 et al. 形式。"""
+    authors_str = ", ".join(authors[:5])
+    if len(authors) > 5:
+        authors_str += f" et al. (+{len(authors) - 5})"
+    return authors_str
+
+
 def format_paper_text(
     paper: ArxivPaper,
     *,
@@ -31,6 +39,7 @@ def format_paper_text(
     show_abstract: bool = True,
     abstract_text: str = "",
     summary_text: str = "",
+    markdown: bool = False,
 ) -> str:
     """将论文元数据格式化为结构化文本。
 
@@ -40,10 +49,22 @@ def format_paper_text(
         show_abstract: 是否包含摘要。
         abstract_text: 覆盖摘要文本（如翻译版本）。
         summary_text: LLM 生成的总结。
+        markdown: 是否输出 QQ 官方机器人支持的 Markdown 语法
+            （标题、加粗、链接）。仅在 QQ 官方平台有效，
+            其他平台会显示原始 Markdown 符号。
 
     Returns:
         格式化后的论文文本。
     """
+    if markdown:
+        return _format_paper_text_markdown(
+            paper,
+            index=index,
+            show_abstract=show_abstract,
+            abstract_text=abstract_text,
+            summary_text=summary_text,
+        )
+
     lines: list[str] = []
 
     # 头部
@@ -53,16 +74,13 @@ def format_paper_text(
     lines.append(header)
 
     # 分区
-    lines.append(f"分区: {_get_category_display(paper.categories)}")
+    lines.append(f"分区: {get_category_display(paper.categories)}")
 
     # 标题
     lines.append(f"标题: {paper.title}")
 
     # 作者
-    authors_str = ", ".join(paper.authors[:5])
-    if len(paper.authors) > 5:
-        authors_str += f" et al. (+{len(paper.authors) - 5})"
-    lines.append(f"作者: {authors_str}")
+    lines.append(f"作者: {format_authors(paper.authors)}")
 
     # 提交时间
     lines.append(f"提交时间: {paper.published_date}")
@@ -89,6 +107,53 @@ def format_paper_text(
     return "\n".join(lines)
 
 
+def _format_paper_text_markdown(
+    paper: ArxivPaper,
+    *,
+    index: int = 0,
+    show_abstract: bool = True,
+    abstract_text: str = "",
+    summary_text: str = "",
+) -> str:
+    """以 QQ 官方 Markdown 语法格式化论文元数据。
+
+    QQ 官方 Markdown 仅支持标题、加粗、链接、列表等语法子集，
+    不支持表格与 HTML 标签。
+    """
+    lines: list[str] = []
+
+    # 头部（二级标题）
+    header = "## 📚 ArXiv 论文推送"
+    if index > 0:
+        header += f" [{index}]"
+    lines.append(header)
+
+    # 元信息（加粗字段名）
+    lines.append(f"**分区**: {get_category_display(paper.categories)}")
+    lines.append(f"**标题**: {paper.title}")
+    lines.append(f"**作者**: {format_authors(paper.authors)}")
+    lines.append(f"**提交时间**: {paper.published_date}")
+    if len(paper.categories) > 1:
+        lines.append(f"**标签**: {', '.join(paper.categories)}")
+
+    # 链接（Markdown 超链接）
+    lines.append(f"[👉 论文详情]({paper.abs_url})")
+
+    # 摘要
+    if show_abstract:
+        abs_text = abstract_text or paper.abstract
+        if abs_text:
+            lines.append(f"\n### 📝 摘要\n\n{abs_text}")
+
+    # AI 总结
+    if summary_text == VISION_FAILURE_TEXT:
+        lines.append(f"\n{VISION_FAILURE_TEXT}")
+    elif summary_text:
+        lines.append(f"\n### 🤖 AI 总结\n\n{summary_text}")
+
+    return "\n".join(lines)
+
+
 def build_paper_chains(
     paper: ArxivPaper,
     *,
@@ -100,12 +165,16 @@ def build_paper_chains(
     pdf_path: str = "",
     abstract_image_path: str = "",
     extra_message: str = "",
+    markdown: bool = False,
 ) -> list[MessageChain]:
     """为单篇论文构建消息链列表。
 
     每篇论文可能产生多条消息：
-    1. 论文基本信息（标题、作者等）+ PDF 截图 + PDF 附件
+    1. 论文基本信息（标题、作者等，不含摘要与 AI 总结）
     2. 摘要（图片或文本，单独一条消息）
+    3. PDF 首页截图
+    4. PDF 附件
+    5. AI 总结（单独一条消息，不在第 1 条中重复）
 
     Args:
         paper: ArxivPaper 对象。
@@ -117,19 +186,20 @@ def build_paper_chains(
         pdf_path: 要附带的 PDF 文件绝对路径。
         abstract_image_path: 摘要渲染图片的绝对路径。
         extra_message: 额外消息（如跳过原因等），附加在链末尾。
+        markdown: 是否输出 QQ 官方 Markdown 语法。
 
     Returns:
         MessageChain 列表。
     """
     chains: list[MessageChain] = []
 
-    # 第 1 条消息：论文基本信息
+    # 第 1 条消息：论文基本信息（AI 总结只在末尾单独发送，此处不重复）
     info_chain = MessageChain()
     text = format_paper_text(
         paper,
         index=index,
         show_abstract=False,
-        summary_text="" if summary_text == VISION_FAILURE_TEXT else summary_text,
+        markdown=markdown,
     )
     info_chain.chain.append(Plain(text))
     chains.append(info_chain)
@@ -143,7 +213,8 @@ def build_paper_chains(
         else:
             abs_text = abstract_text or paper.abstract
             if abs_text:
-                abstract_chain.chain.append(Plain(f"📝 摘要:\n{abs_text}"))
+                heading = "### 📝 摘要\n\n" if markdown else "📝 摘要:\n"
+                abstract_chain.chain.append(Plain(f"{heading}{abs_text}"))
                 chains.append(abstract_chain)
 
     # 第 3 条消息：PDF 首页截图
@@ -164,6 +235,8 @@ def build_paper_chains(
         summary_chain = MessageChain()
         if summary_text == VISION_FAILURE_TEXT:
             summary_chain.chain.append(Plain(VISION_FAILURE_TEXT))
+        elif markdown:
+            summary_chain.chain.append(Plain(f"### 🤖 AI 总结\n\n{summary_text}"))
         else:
             summary_chain.chain.append(Plain(f"🤖 AI 总结:\n{summary_text}"))
         chains.append(summary_chain)

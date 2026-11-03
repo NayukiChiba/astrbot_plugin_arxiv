@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=960, initial-scale=1">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    padding: 24px;
+    background: #eef1f5;
+    font-family: "MiSans", -apple-system, "Segoe UI", "Noto Sans CJK SC",
+      "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #2b2f36;
+  }
+  .card {
+    width: 840px;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(31, 45, 61, 0.10);
+  }
+  .card-header {
+    padding: 22px 36px;
+    background: linear-gradient(135deg, #4a90d9 0%, #357abd 100%);
+    color: #ffffff;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .card-header .app { font-size: 24px; font-weight: 700; letter-spacing: 1px; }
+  .card-header .index { font-size: 18px; opacity: 0.85; }
+  .card-body { padding: 28px 36px 32px; }
+  .badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 999px;
+    background: #e8f1fb;
+    color: #357abd;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .title {
+    margin-top: 14px;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.45;
+    color: #1a1a2e;
+  }
+  .meta { margin-top: 16px; font-size: 17px; line-height: 1.9; color: #555c66; }
+  .meta .label { color: #9aa1ab; margin-right: 8px; }
+  .section { margin-top: 26px; }
+  .section-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #357abd;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e8f1fb;
+  }
+  .section-body {
+    margin-top: 12px;
+    font-size: 18px;
+    line-height: 1.85;
+    color: #333a45;
+    text-align: justify;
+    overflow-wrap: break-word;
+  }
+  .summary {
+    margin-top: 26px;
+    padding: 18px 22px;
+    border-radius: 12px;
+    background: #f4f8fd;
+    border-left: 4px solid #4a90d9;
+  }
+  .summary .section-title { border-bottom: none; padding-bottom: 0; }
+  .summary .section-body { margin-top: 8px; }
+  .screenshot { margin-top: 26px; text-align: center; }
+  .screenshot img {
+    max-width: 100%;
+    border: 1px solid #e2e6ec;
+    border-radius: 8px;
+  }
+  .extra {
+    margin-top: 22px;
+    font-size: 16px;
+    color: #b78a2a;
+  }
+  .card-footer {
+    padding: 16px 36px;
+    background: #f7f9fb;
+    font-size: 15px;
+    color: #9aa1ab;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header">
+    <span class="app">📚 ArXiv 论文推送</span>
+    {% if index > 0 %}<span class="index">[{{ index }}]</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <span class="badge">{{ category }}</span>
+    <div class="title">{{ title_html | safe }}</div>
+    <div class="meta">
+      <div><span class="label">作者</span>{{ authors_html | safe }}</div>
+      <div><span class="label">提交时间</span>{{ published }}</div>
+      {% if tags %}<div><span class="label">标签</span>{{ tags }}</div>{% endif %}
+    </div>
+    {% if abstract_html %}
+    <div class="section">
+      <div class="section-title">📝 摘要</div>
+      <div class="section-body">{{ abstract_html | safe }}</div>
+    </div>
+    {% endif %}
+    {% if summary_html %}
+    <div class="summary">
+      <div class="section-title">🤖 AI 总结</div>
+      <div class="section-body">{{ summary_html | safe }}</div>
+    </div>
+    {% endif %}
+    {% if summary_failure %}
+    <div class="summary">
+      <div class="section-body">识图失败</div>
+    </div>
+    {% endif %}
+    {% if screenshot_b64 %}
+    <div class="screenshot">
+      <img src="data:image/png;base64,{{ screenshot_b64 }}" alt="PDF 首页截图">
+    </div>
+    {% endif %}
+    {% if extra_html %}<div class="extra">{{ extra_html | safe }}</div>{% endif %}
+  </div>
+  <div class="card-footer">
+    <span>arXiv:{{ arxiv_id }}</span>
+    <span>{{ abs_url }}</span>
+  </div>
+</div>
+</body>
+</html>

@@ -12,6 +12,7 @@ from datetime import datetime
 
 import aiohttp
 import feedparser
+
 from astrbot.api import logger
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
@@ -77,7 +78,7 @@ def extractArxivId(inputStr: str) -> str:
     inputStr = inputStr.strip()
 
     # 匹配 arxiv.org/abs/ 或 arxiv.org/pdf/ 链接
-    m = re.search(r'arxiv\.org/(?:abs|pdf)/([^/\s?#]+)', inputStr)
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/([^/\s?#]+)", inputStr)
     if m:
         rawId = m.group(1)
         # 去掉可能的 .pdf 后缀
