@@ -106,6 +106,11 @@ class ArxivPlugin(Star):
         return self.config.get("llm_config", {})
 
     @property
+    def _platform_cfg(self) -> dict:
+        """获取平台适配配置（含跨平台的按图发送设置与各平台配置块）。"""
+        return self.config.get("platform_config", {})
+
+    @property
     def _paper_store_enabled(self) -> bool:
         """是否持久化存储已发送论文与 PDF（供 WebUI 浏览）。"""
         return self._storage_cfg.get("store_papers", True)
@@ -206,6 +211,12 @@ class ArxivPlugin(Star):
                 platform_cfg = self.config.setdefault("platform_config", {})
                 platform_cfg.setdefault("default", {})["text_format"] = old_fmt
             moved = True
+
+        # 按图发送（发送形式）从发送内容组迁入平台适配组（v1.3.0 曾放在发送内容组）
+        for key in ("send_as_image", "image_template"):
+            if key in send_cfg:
+                self.config.setdefault("platform_config", {})[key] = send_cfg.pop(key)
+                moved = True
 
         if not moved:
             return
@@ -531,7 +542,7 @@ class ArxivPlugin(Star):
         pdf_path_str = ""
         # send_as_image 为 None 时跟随配置，否则使用调用方覆盖值（WebUI 测试用）
         if send_as_image is None:
-            send_as_image = self._send_cfg.get("send_as_image", False)
+            send_as_image = self._platform_cfg.get("send_as_image", False)
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -719,7 +730,7 @@ class ArxivPlugin(Star):
             screenshot_b64=screenshot_b64,
             extra_message=extra_message,
         )
-        template_name = self._send_cfg.get("image_template", "default")
+        template_name = self._platform_cfg.get("image_template", "default")
         try:
             template_str = image_render.load_template(
                 self._data_dir / "templates",
@@ -764,7 +775,7 @@ class ArxivPlugin(Star):
         """
         chains: list[MessageChain] = []
         send_abstract = self._send_cfg.get("send_abstract", True)
-        send_as_image = self._send_cfg.get("send_as_image", False)
+        send_as_image = self._platform_cfg.get("send_as_image", False)
         abstract_as_image = (
             self._send_cfg.get("abstract_as_image", True) and not send_as_image
         )
@@ -1073,7 +1084,7 @@ class ArxivPlugin(Star):
             f"🎯 目标会话: {len(targets)} 个",
             f"📨 发送模式: {mode_display}（当前平台）",
             f"🔤 文本格式: {text_format_display}（当前平台）",
-            f"🌅 按图发送: {'开启' if self._send_cfg.get('send_as_image') else '关闭'}",
+            f"🌅 按图发送: {'开启' if self._platform_cfg.get('send_as_image') else '关闭'}",
             f"📝 摘要模式: {abstract_display}",
             f"🖼️ PDF 截图: {'开启' if self._send_cfg.get('screenshot_pdf') else '关闭'}",
             f"📎 附带 PDF: {'开启' if self._send_cfg.get('attach_pdf') else '关闭'}",

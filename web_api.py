@@ -93,8 +93,10 @@ class ArxivWebAPI:
                     "push_timezone": push_cfg.get("push_timezone", "Asia/Shanghai"),
                     "target_sessions": push_cfg.get("target_sessions", []),
                     "platform_config": plugin.config.get("platform_config", {}),
-                    "send_as_image": send_cfg.get("send_as_image", False),
-                    "image_template": send_cfg.get("image_template", "default"),
+                    "send_as_image": plugin._platform_cfg.get("send_as_image", False),
+                    "image_template": plugin._platform_cfg.get(
+                        "image_template", "default"
+                    ),
                     "send_abstract": send_cfg.get("send_abstract", True),
                     "attach_pdf": send_cfg.get("attach_pdf", False),
                     "screenshot_pdf": send_cfg.get("screenshot_pdf", True),
@@ -259,7 +261,7 @@ class ArxivWebAPI:
 
         # 按图发送预览：渲染卡片并返回 base64 图片
         if body.get("send_as_image"):
-            template_name = body.get("image_template") or self.plugin._send_cfg.get(
+            template_name = body.get("image_template") or self.plugin._platform_cfg.get(
                 "image_template", "default"
             )
             try:
