@@ -155,7 +155,7 @@ async function loadLibrary() {
           <span>${(p.sessions || []).length} 个会话</span>
         </div>
         <div class="actions">
-          ${p.pdf_file ? `<button class="btn" data-action="pdf" data-id="${escapeHtml(p.arxiv_id)}" data-name="${escapeHtml(p.pdf_file)}">查看 PDF</button>` : ""}
+          ${p.pdf_file ? `<button class="btn" data-action="pdf" data-id="${escapeHtml(p.arxiv_id)}" data-name="${escapeHtml(p.pdf_file)}">下载 PDF</button>` : ""}
           <button class="btn" data-action="abstract" data-id="${escapeHtml(p.arxiv_id)}">摘要</button>
           <a class="btn" href="${escapeHtml(p.abs_url)}" target="_blank" rel="noopener">arXiv 页面</a>
         </div>
