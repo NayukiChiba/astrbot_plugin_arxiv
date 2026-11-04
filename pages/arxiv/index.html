@@ -23,6 +23,7 @@
         <div class="panel-row">
           <span id="storage-info" class="muted">加载中…</span>
           <span class="spacer"></span>
+          <button id="btn-delete-selected" class="btn warn hidden">删除选中</button>
           <button id="btn-cleanup" class="btn">立即清理</button>
           <button id="btn-reload-library" class="btn">刷新</button>
         </div>
@@ -32,6 +33,29 @@
         </div>
       </div>
     </section>
+
+    <!-- ── 论文详情弹窗 ────────────────────────── -->
+    <div id="detail-modal" class="modal hidden">
+      <div class="modal-mask" data-close="detail"></div>
+      <div class="modal-body">
+        <div class="modal-head">
+          <span id="detail-title" class="modal-title"></span>
+          <button class="btn" data-close="detail">关闭</button>
+        </div>
+        <div class="modal-content">
+          <div id="detail-meta" class="detail-meta"></div>
+          <div class="tabs small">
+            <button class="dtab active" data-dtab="abstract">摘要</button>
+            <button class="dtab" data-dtab="screenshot">首页截图</button>
+            <button class="dtab" data-dtab="card">卡片图片</button>
+          </div>
+          <pre id="detail-abstract" class="preview-text"></pre>
+          <div id="detail-image-wrap" class="hidden center">
+            <img id="detail-image" alt="论文图片" />
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ── 获取与发送 ─────────────────────────── -->
     <section id="tab-fetcher" class="tab-page hidden">
