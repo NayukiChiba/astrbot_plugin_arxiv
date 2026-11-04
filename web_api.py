@@ -114,6 +114,57 @@ class ArxivWebAPI:
             }
         )
 
+    # ── 配置读写 ─────────────────────────────────────────────
+
+    # 允许在线编辑的配置组（键 -> 该组内允许更新的字段）
+    _EDITABLE_CONFIG = {
+        "arxiv_config": None,  # None 表示整组可改
+        "push_config": None,
+        "send_config": None,
+        "platform_config": None,
+        "storage_config": None,
+        "llm_config": None,
+    }
+
+    async def api_config_get(self):
+        """返回当前完整插件配置（六分组）。"""
+        cfg = self.plugin.config
+        return json_response(
+            {group: cfg.get(group, {}) for group in self._EDITABLE_CONFIG}
+        )
+
+    async def api_config_update(self):
+        """更新指定配置组并保存。仅接受已知的六个配置组。"""
+        body = await request.json(default={}) or {}
+        group = str(body.get("group", ""))
+        values = body.get("values")
+        if group not in self._EDITABLE_CONFIG:
+            return error_response(f"不允许修改的配置组: {group}")
+        if not isinstance(values, dict):
+            return error_response("values 必须是对象")
+
+        plugin = self.plugin
+        plugin.config[group] = values
+        try:
+            plugin.config.save_config()
+        except Exception as e:
+            logger.exception("WebUI 保存配置失败。")
+            return error_response(f"保存配置失败: {e}", status_code=500)
+
+        # 定时推送配置变更后重注册定时任务
+        if group == "push_config":
+            try:
+                await plugin._register_cron_job()
+            except Exception:
+                logger.exception("重注册定时任务失败。")
+        # 关闭存储时清空论文库
+        if group == "storage_config" and not values.get("store_papers", True):
+            if plugin._paper_store:
+                plugin._paper_store.clear_all()
+
+        logger.info("WebUI 更新了配置组 %s。", group)
+        return json_response({"ok": True})
+
     # ── 论文库 ───────────────────────────────────────────────
 
     async def api_papers(self):
@@ -191,9 +242,7 @@ class ArxivWebAPI:
         if not path:
             return error_response("该论文没有可用的首页截图", status_code=404)
         if request.query.get("format") == "base64":
-            return json_response(
-                {"data_url": _file_to_data_url(path, "image/png")}
-            )
+            return json_response({"data_url": _file_to_data_url(path, "image/png")})
         return file_response(path, filename=path.name, content_type="image/png")
 
     async def api_paper_card(self):
@@ -375,11 +424,19 @@ class ArxivWebAPI:
         send_as_image = body.get("send_as_image")
         if send_as_image is not None:
             send_as_image = bool(send_as_image)
+        attach_pdf = body.get("attach_pdf")
+        if attach_pdf is not None:
+            attach_pdf = bool(attach_pdf)
+        screenshot_pdf = body.get("screenshot_pdf")
+        if screenshot_pdf is not None:
+            screenshot_pdf = bool(screenshot_pdf)
 
         chains = await plugin._process_papers(
             [paper],
             text_format=text_format,
             send_as_image=send_as_image,
+            attach_pdf=attach_pdf,
+            screenshot_pdf=screenshot_pdf,
         )
         if not chains:
             return error_response("论文处理失败，未生成任何消息", status_code=500)
@@ -401,6 +458,61 @@ class ArxivWebAPI:
         logger.info("WebUI 手动发送论文 %s 至 %s。", paper.arxiv_id, session)
         return json_response({"ok": True, "chains": len(chains)})
 
+    async def api_resend(self):
+        """把论文库中已推送的论文重新发送到指定会话。"""
+        body = await request.json(default={}) or {}
+        arxiv_id = str(body.get("arxiv_id", ""))
+        session = str(body.get("session", "")).strip()
+        store = self.plugin._paper_store
+        if not store or not arxiv_id:
+            return error_response("缺少 arxiv_id 参数")
+        if ":" not in session:
+            return error_response(
+                "session 必须是合法的 UMO（如 aiocqhttp:GroupMessage:123）"
+            )
+
+        record = store.get(arxiv_id)
+        if not record:
+            return error_response("论文不存在", status_code=404)
+
+        plugin = self.plugin
+        paper = paper_from_dict(record)
+        text_format = plugin.text_format_for_session(
+            session, str(body.get("text_format", "auto"))
+        )
+        send_as_image = body.get("send_as_image")
+        if send_as_image is not None:
+            send_as_image = bool(send_as_image)
+        attach_pdf = body.get("attach_pdf")
+        if attach_pdf is not None:
+            attach_pdf = bool(attach_pdf)
+        screenshot_pdf = body.get("screenshot_pdf")
+        if screenshot_pdf is not None:
+            screenshot_pdf = bool(screenshot_pdf)
+
+        chains = await plugin._process_papers(
+            [paper],
+            text_format=text_format,
+            send_as_image=send_as_image,
+            attach_pdf=attach_pdf,
+            screenshot_pdf=screenshot_pdf,
+        )
+        if not chains:
+            return error_response("论文处理失败，未生成任何消息", status_code=500)
+
+        await plugin._deliver_chains(session, chains)
+        # 重发也更新论文库会话记录
+        if plugin._paper_store_enabled:
+            artifacts = plugin._pending_artifacts.pop(paper.arxiv_id, {})
+            store.record(
+                paper,
+                session,
+                screenshot_file=artifacts.get("screenshot_file", ""),
+                card_file=artifacts.get("card_file", ""),
+            )
+        logger.info("WebUI 重发论文 %s 至 %s。", arxiv_id, session)
+        return json_response({"ok": True, "chains": len(chains)})
+
     async def api_trigger_push(self):
         """手动触发一次定时推送（用于测试）。"""
         try:
@@ -416,6 +528,8 @@ def register_web_routes(plugin: ArxivPlugin) -> None:
     api = ArxivWebAPI(plugin)
     routes = [
         (f"/{PLUGIN_NAME}/overview", api.api_overview, ["GET"], "插件配置与状态概览"),
+        (f"/{PLUGIN_NAME}/config", api.api_config_get, ["GET"], "读取插件配置"),
+        (f"/{PLUGIN_NAME}/config", api.api_config_update, ["POST"], "更新插件配置"),
         (f"/{PLUGIN_NAME}/papers", api.api_papers, ["GET"], "已发送论文列表"),
         (f"/{PLUGIN_NAME}/papers/detail", api.api_paper_detail, ["GET"], "论文详情"),
         (f"/{PLUGIN_NAME}/papers/pdf", api.api_paper_pdf, ["GET"], "论文 PDF 文件"),
@@ -446,6 +560,7 @@ def register_web_routes(plugin: ArxivPlugin) -> None:
         (f"/{PLUGIN_NAME}/fetch", api.api_fetch, ["POST"], "获取论文（不发送）"),
         (f"/{PLUGIN_NAME}/preview", api.api_preview, ["POST"], "预览发送样式"),
         (f"/{PLUGIN_NAME}/send", api.api_send, ["POST"], "发送论文到会话"),
+        (f"/{PLUGIN_NAME}/resend", api.api_resend, ["POST"], "重发已推送论文"),
         (
             f"/{PLUGIN_NAME}/push/trigger",
             api.api_trigger_push,
