@@ -50,6 +50,11 @@ def paper_from_dict(data: dict[str, Any]) -> arxiv_client.ArxivPaper:
     )
 
 
+def _file_to_data_url(path: Path, mime: str) -> str:
+    """把本地图片文件读为 base64 data URL（用于 WebUI iframe 内经鉴权展示）。"""
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+
+
 class ArxivWebAPI:
     """ArXiv 插件页面的 Web API 处理器集合。"""
 
@@ -176,7 +181,7 @@ class ArxivWebAPI:
         )
 
     async def api_paper_screenshot(self):
-        """返回论文对应的 PDF 首页截图。"""
+        """返回论文对应的 PDF 首页截图（format=base64 时返回 JSON data URL）。"""
         store = self.plugin._paper_store
         arxiv_id = request.query.get("arxiv_id", "")
         if not store or not arxiv_id:
@@ -185,10 +190,14 @@ class ArxivWebAPI:
         path = store.screenshot_path(arxiv_id)
         if not path:
             return error_response("该论文没有可用的首页截图", status_code=404)
+        if request.query.get("format") == "base64":
+            return json_response(
+                {"data_url": _file_to_data_url(path, "image/png")}
+            )
         return file_response(path, filename=path.name, content_type="image/png")
 
     async def api_paper_card(self):
-        """返回论文对应的按图发送卡片图片。"""
+        """返回论文对应的按图发送卡片图片（format=base64 时返回 JSON data URL）。"""
         store = self.plugin._paper_store
         arxiv_id = request.query.get("arxiv_id", "")
         if not store or not arxiv_id:
@@ -198,7 +207,10 @@ class ArxivWebAPI:
         if not path:
             return error_response("该论文没有可用的卡片图片", status_code=404)
         suffix = path.suffix.lstrip(".").lower() or "jpeg"
-        return file_response(path, filename=path.name, content_type=f"image/{suffix}")
+        mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
+        if request.query.get("format") == "base64":
+            return json_response({"data_url": _file_to_data_url(path, mime)})
+        return file_response(path, filename=path.name, content_type=mime)
 
     async def api_papers_delete(self):
         """批量删除论文记录及其关联文件。"""

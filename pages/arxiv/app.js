@@ -12,6 +12,7 @@ const state = {
   selectedIndex: -1,
   preview: null,
   previewTab: "plain",
+  detailId: null,
 };
 
 // ── 工具 ──────────────────────────────────────────────
@@ -124,11 +125,15 @@ function updateSessionPlatform() {
 
 // ── 论文库 ────────────────────────────────────────────
 
+const libraryState = { selected: new Set() };
+
 async function loadLibrary() {
   const res = await bridge.apiGet("papers", { limit: 100 });
   const list = $("library-list");
   const empty = $("library-empty");
   const items = res.items || [];
+  libraryState.selected.clear();
+  updateDeleteButton();
 
   if (!items.length) {
     list.innerHTML = "";
@@ -142,7 +147,10 @@ async function loadLibrary() {
       const authors = escapeHtml((p.authors || []).slice(0, 3).join(", "));
       return `
       <div class="paper-card" data-index="${i}">
-        <div class="title">${escapeHtml(p.title)}</div>
+        <div class="check-cell">
+          <input type="checkbox" class="select-box" data-id="${escapeHtml(p.arxiv_id)}" />
+          <div class="title">${escapeHtml(p.title)}</div>
+        </div>
         <div class="meta">
           <span class="cat">${cat}</span>
           <span>${escapeHtml(p.arxiv_id)}</span>
@@ -155,17 +163,90 @@ async function loadLibrary() {
           <span>${(p.sessions || []).length} 个会话</span>
         </div>
         <div class="actions">
+          <button class="btn" data-action="detail" data-id="${escapeHtml(p.arxiv_id)}">详情</button>
           ${p.pdf_file ? `<button class="btn" data-action="pdf" data-id="${escapeHtml(p.arxiv_id)}" data-name="${escapeHtml(p.pdf_file)}">下载 PDF</button>` : ""}
-          <button class="btn" data-action="abstract" data-id="${escapeHtml(p.arxiv_id)}">摘要</button>
           <a class="btn" href="${escapeHtml(p.abs_url)}" target="_blank" rel="noopener">arXiv 页面</a>
         </div>
-        <div class="abstract hidden" id="abstract-${i}"></div>
       </div>`;
     })
     .join("");
 }
 
+function updateDeleteButton() {
+  const btn = $("btn-delete-selected");
+  const n = libraryState.selected.size;
+  btn.classList.toggle("hidden", n === 0);
+  btn.textContent = n > 0 ? `删除选中（${n}）` : "删除选中";
+}
+
+// 详情弹窗：展示完整信息、摘要、首页截图、卡片图片
+async function openDetail(arxivId) {
+  const detail = await bridge.apiGet("papers/detail", { arxiv_id: arxivId });
+  state.detailId = arxivId;
+  state.detail = detail;
+  $("detail-title").textContent = detail.title || arxivId;
+  $("detail-meta").innerHTML = [
+    escapeHtml(detail.arxiv_id || ""),
+    escapeHtml((detail.authors || []).join(", ")),
+    escapeHtml((detail.categories || []).join(", ")),
+    `发送于 ${fmtTime(detail.sent_at)}`,
+    escapeHtml((detail.sessions || []).join(" ・ ")),
+  ]
+    .filter(Boolean)
+    .map((s) => `<span>${s}</span>`)
+    .join("");
+
+  $("detail-abstract").textContent = detail.abstract || "（无摘要）";
+  // 截图 / 卡片可用性
+  document.querySelector('[data-dtab="screenshot"]').style.display = detail.has_screenshot ? "" : "none";
+  document.querySelector('[data-dtab="card"]').style.display = detail.has_card ? "" : "none";
+  switchDetailTab("abstract", arxivId);
+  $("detail-modal").classList.remove("hidden");
+}
+
+function switchDetailTab(tab, arxivId) {
+  const detail = state.detail;
+  document.querySelectorAll(".dtab").forEach((t) =>
+    t.classList.toggle("active", t.dataset.dtab === tab)
+  );
+  const textEl = $("detail-abstract");
+  const imgWrap = $("detail-image-wrap");
+  const img = $("detail-image");
+  if (tab === "abstract") {
+    textEl.classList.remove("hidden");
+    imgWrap.classList.add("hidden");
+    return;
+  }
+  textEl.classList.add("hidden");
+  imgWrap.classList.remove("hidden");
+  const endpoint = tab === "screenshot" ? "papers/screenshot" : "papers/card";
+  img.src = "";
+  img.alt = "加载中…";
+  bridgeImageUrl(endpoint, arxivId)
+    .then((url) => {
+      if (url) img.src = url;
+      else img.alt = "图片不可用";
+    })
+    .catch(() => {
+      img.alt = "图片加载失败";
+    });
+}
+
+// 经桥接 GET 拉取图片（base64 JSON），转为 data URL 展示
+async function bridgeImageUrl(endpoint, arxivId) {
+  const res = await bridge.apiGet(endpoint, { arxiv_id: arxivId, format: "base64" });
+  return res && res.data_url ? res.data_url : "";
+}
+
 async function onLibraryClick(event) {
+  const box = event.target.closest(".select-box");
+  if (box) {
+    if (box.checked) libraryState.selected.add(box.dataset.id);
+    else libraryState.selected.delete(box.dataset.id);
+    updateDeleteButton();
+    return;
+  }
+
   const btn = event.target.closest("button[data-action]");
   if (!btn) return;
   const action = btn.dataset.action;
@@ -176,15 +257,31 @@ async function onLibraryClick(event) {
     return;
   }
 
-  if (action === "abstract") {
-    const card = btn.closest(".paper-card");
-    const absEl = card.querySelector(".abstract");
-    if (!absEl.dataset.loaded) {
-      const detail = await bridge.apiGet("papers/detail", { arxiv_id: arxivId });
-      absEl.textContent = detail.abstract || "（无摘要）";
-      absEl.dataset.loaded = "1";
+  if (action === "detail") {
+    try {
+      await openDetail(arxivId);
+    } catch (e) {
+      toast(`加载详情失败: ${e.message || e}`);
     }
-    absEl.classList.toggle("hidden");
+    return;
+  }
+}
+
+async function deleteSelected() {
+  const ids = [...libraryState.selected];
+  if (!ids.length) return;
+  if (!confirm(`确认删除选中的 ${ids.length} 篇论文及其 PDF / 截图 / 卡片？`)) return;
+  const btn = $("btn-delete-selected");
+  btn.disabled = true;
+  try {
+    const res = await bridge.apiPost("papers/delete", { arxiv_ids: ids });
+    toast(`已删除 ${res.removed} 篇，剩余 ${res.count} 篇（${fmtSize(res.total_size_bytes)}）`);
+    await loadOverview();
+    await loadLibrary();
+  } catch (e) {
+    toast(`删除失败: ${e.message || e}`);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -395,6 +492,18 @@ function bindEvents() {
   });
 
   $("library-list").addEventListener("click", onLibraryClick);
+  $("btn-delete-selected").addEventListener("click", deleteSelected);
+
+  // 详情弹窗：tab 切换与关闭
+  document.querySelectorAll(".dtab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      if (state.detailId) switchDetailTab(tab.dataset.dtab, state.detailId);
+    });
+  });
+  document.querySelectorAll('[data-close="detail"]').forEach((el) => {
+    el.addEventListener("click", () => $("detail-modal").classList.add("hidden"));
+  });
+
   $("send-session").addEventListener("input", updateSessionPlatform);
   $("btn-fetch").addEventListener("click", fetchPapers);
   $("btn-preview").addEventListener("click", loadPreview);
