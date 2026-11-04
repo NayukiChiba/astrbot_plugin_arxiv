@@ -66,23 +66,8 @@
   "send_config": {
     "description": "发送内容",
     "type": "object",
-    "hint": "控制每篇论文发送哪些内容，对所有平台生效。文本格式与合并转发在「平台适配」中按平台配置。",
+    "hint": "控制每篇论文发送哪些内容，对所有平台生效。按图发送（发送形式）在「平台适配」中配置；文本格式与合并转发也在「平台适配」中按平台配置。",
     "items": {
-      "send_as_image": {
-        "description": "按图发送",
-        "type": "bool",
-        "hint": "开启后将论文元信息、摘要与 AI 总结合并渲染为一张卡片图片发送（依赖 AstrBot t2i 文转图服务）。PDF 附件仍单独发送。",
-        "default": false
-      },
-      "image_template": {
-        "description": "卡片模板",
-        "type": "string",
-        "hint": "按图发送使用的 HTML 模板文件名（不含 .html 后缀）。模板目录为插件数据目录下的 templates/，可在其中添加自定义模板。",
-        "default": "default",
-        "condition": {
-          "send_as_image": true
-        }
-      },
       "send_abstract": {
         "description": "发送论文摘要",
         "type": "bool",
@@ -129,6 +114,21 @@
     "type": "object",
     "hint": "按平台类型分别配置发送行为。「默认」对未单独配置的平台生效；QQ 官方机器人（qqofficial / qqofficial_webhook）共用 QQ 官方配置；aiocqhttp 仅支持纯文本，合并转发仅 aiocqhttp 支持。还可在下方为某个机器人实例添加单独适配，优先级最高。",
     "items": {
+      "send_as_image": {
+        "description": "按图发送",
+        "type": "bool",
+        "hint": "开启后将论文元信息、摘要与 AI 总结合并渲染为一张卡片图片发送（依赖 AstrBot t2i 文转图服务），对所有平台生效。PDF 附件仍单独发送。",
+        "default": false
+      },
+      "image_template": {
+        "description": "卡片模板",
+        "type": "string",
+        "hint": "按图发送使用的 HTML 模板文件名（不含 .html 后缀）。模板目录为插件数据目录下的 templates/，可在其中添加自定义模板。",
+        "default": "default",
+        "condition": {
+          "send_as_image": true
+        }
+      },
       "default": {
         "description": "默认（其他平台）",
         "type": "object",
@@ -250,7 +250,8 @@
         "description": "摘要处理方式",
         "type": "string",
         "options": ["original", "llm_chinese"],
-        "hint": "original: 保留英文原文; llm_chinese: 使用 LLM 翻译为中文。",
+        "labels": ["英文（原文）", "中文（LLM 翻译）"],
+        "hint": "英文（原文）: 保留英文原文摘要; 中文（LLM 翻译）: 使用 LLM 将摘要翻译为中文。",
         "default": "original"
       },
       "llm_summarize": {

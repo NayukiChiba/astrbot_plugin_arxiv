@@ -85,12 +85,10 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 
 ### 发送内容
 
-对所有平台生效的内容开关。部分配置项仅在相关功能开启时显示（如卡片模板仅在按图发送时显示）。
+对所有平台生效的内容开关。部分配置项仅在相关功能开启时显示（如摘要图片仅在发送摘要时显示、截图 DPI 仅在截图开启时显示）。按图发送（发送形式）在「平台适配」组配置。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| send_as_image | bool | `false` | 按图发送：整篇论文渲染为一张卡片图片（依赖 t2i 文转图服务） |
-| image_template | string | `"default"` | 卡片模板文件名（不含 .html 后缀），见下方「自定义卡片模板」 |
 | send_abstract | bool | `true` | 是否发送摘要 |
 | abstract_as_image | bool | `true` | 摘要是否渲染为图片 |
 | attach_pdf | bool | `true` | 是否附带 PDF 文件 |
@@ -104,6 +102,8 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 
 | 平台配置块 | 配置项 | 类型 | 默认值 | 说明 |
 |------------|--------|------|--------|------|
+| （组级，跨平台） | send_as_image | bool | `false` | 按图发送：整篇论文渲染为一张卡片图片（依赖 t2i 文转图服务），对所有平台生效 |
+| （组级，跨平台） | image_template | string | `"default"` | 卡片模板文件名（不含 .html 后缀），见下方「自定义卡片模板」 |
 | default（其他平台） | text_format | string | `"plain"` | 文本格式：`plain` / `markdown`（需平台支持渲染） |
 | aiocqhttp（OneBot v11） | use_forward | bool | `false` | 是否使用合并转发（仅 aiocqhttp 支持） |
 | aiocqhttp | bot_name | string | `"ArXiv Bot"` | 合并转发中的机器人昵称（开启合并转发时显示） |
@@ -129,7 +129,7 @@ ArXiv 论文搜索与定时推送插件，适用于 [AstrBot](https://github.com
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| abstract_mode | string | `"original"` | `original` 或 `llm_chinese` |
+| abstract_mode | string | `英文（原文）` | `英文（原文）` 或 `中文（LLM 翻译）` |
 | llm_summarize | bool | `false` | 是否使用 LLM 总结论文 |
 | translate_provider_id | string | `""` | 摘要翻译 LLM 提供商（留空使用默认，可用小模型） |
 | summarize_provider_id | string | `""` | 论文总结 LLM 提供商（需多模态视觉模型，留空使用默认） |
