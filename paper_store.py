@@ -23,6 +23,12 @@ def pdf_filename_from_url(pdf_url: str) -> str:
     return filename
 
 
+def _asset_filename(arxiv_id: str, suffix: str) -> str:
+    """生成论文附属资源（截图 / 卡片图片）的文件名，ID 中的路径分隔符替换为下划线。"""
+    safe_id = arxiv_id.replace("/", "_")
+    return f"{safe_id}{suffix}"
+
+
 class PaperStore:
     """已发送论文的元数据存储与 PDF 文件管理。"""
 
@@ -38,6 +44,16 @@ class PaperStore:
     def papers_dir(self) -> Path:
         """PDF 持久化保存目录。"""
         return self._dir
+
+    @property
+    def screenshots_dir(self) -> Path:
+        """PDF 首页截图持久化保存目录。"""
+        return self._dir / "screenshots"
+
+    @property
+    def cards_dir(self) -> Path:
+        """按图发送卡片图片持久化保存目录。"""
+        return self._dir / "cards"
 
     def _load(self) -> None:
         """从磁盘加载元数据。"""
@@ -56,8 +72,22 @@ class PaperStore:
         with open(self._file, "w", encoding="utf-8") as f:
             json.dump(self._data, f, ensure_ascii=False, indent=2)
 
-    def record(self, paper: ArxivPaper, session: str) -> None:
-        """记录一篇已发送的论文（重复记录时更新发送时间与会话列表）。"""
+    def record(
+        self,
+        paper: ArxivPaper,
+        session: str,
+        *,
+        screenshot_file: str = "",
+        card_file: str = "",
+    ) -> None:
+        """记录一篇已发送的论文（重复记录时更新发送时间与会话列表）。
+
+        Args:
+            paper: 论文元数据。
+            session: 目标会话 UMO。
+            screenshot_file: PDF 首页截图文件名（需已存入 screenshots_dir）。
+            card_file: 按图发送卡片图片文件名（需已存入 cards_dir）。
+        """
         pdf_file = pdf_filename_from_url(paper.pdf_url) if paper.pdf_url else ""
         existing = self._data.get(paper.arxiv_id, {})
         sessions = list(dict.fromkeys([*existing.get("sessions", []), session]))
@@ -72,12 +102,51 @@ class PaperStore:
             "abstract": paper.abstract,
             "sent_at": time.time(),
             "sessions": sessions,
-            # 仅记录确实存在于 papers 目录中的 PDF 文件名
+            # 仅记录确实存在于对应目录中的文件名
             "pdf_file": (
                 pdf_file if pdf_file and (self._dir / pdf_file).is_file() else None
             ),
+            "screenshot_file": (
+                screenshot_file
+                if screenshot_file
+                and (self.screenshots_dir / screenshot_file).is_file()
+                else None
+            ),
+            "card_file": (
+                card_file
+                if card_file and (self.cards_dir / card_file).is_file()
+                else None
+            ),
         }
         self._save()
+
+    def save_screenshot(self, arxiv_id: str, source_path: Path) -> str:
+        """把 PDF 首页截图复制到 screenshots_dir，返回文件名（失败返回空串）。"""
+        return self._copy_asset(
+            source_path, self.screenshots_dir, _asset_filename(arxiv_id, ".png")
+        )
+
+    def save_card(self, arxiv_id: str, source_path: Path) -> str:
+        """把按图发送卡片图片复制到 cards_dir，返回文件名（失败/无源返回空串）。"""
+        if not source_path:
+            return ""
+        suffix = source_path.suffix or ".jpeg"
+        return self._copy_asset(
+            source_path, self.cards_dir, _asset_filename(arxiv_id, suffix)
+        )
+
+    @staticmethod
+    def _copy_asset(source_path: Path, target_dir: Path, filename: str) -> str:
+        """把资源文件复制进持久化目录，返回文件名；源不存在或失败返回空串。"""
+        try:
+            if not source_path or not Path(source_path).is_file():
+                return ""
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / filename
+            target.write_bytes(Path(source_path).read_bytes())
+            return filename
+        except OSError:
+            return ""
 
     def list_papers(
         self,
@@ -120,40 +189,99 @@ class PaperStore:
         path = self._dir / pdf_file
         return path if path.is_file() else None
 
+    def _asset_path(self, arxiv_id: str, key: str, directory: Path) -> Path | None:
+        """获取论文附属资源（截图 / 卡片）的文件路径，不存在时返回 None。"""
+        record = self._data.get(arxiv_id)
+        if not record:
+            return None
+        filename = record.get(key)
+        if not filename:
+            return None
+        path = directory / filename
+        return path if path.is_file() else None
+
+    def screenshot_path(self, arxiv_id: str) -> Path | None:
+        """获取论文对应的 PDF 首页截图路径，不存在时返回 None。"""
+        return self._asset_path(arxiv_id, "screenshot_file", self.screenshots_dir)
+
+    def card_path(self, arxiv_id: str) -> Path | None:
+        """获取论文对应的按图发送卡片路径，不存在时返回 None。"""
+        return self._asset_path(arxiv_id, "card_file", self.cards_dir)
+
+    def delete_papers(self, arxiv_ids: list[str]) -> int:
+        """批量删除论文记录及其关联的 PDF / 截图 / 卡片，返回删除的记录数。"""
+        removed = 0
+        for arxiv_id in arxiv_ids:
+            record = self._data.pop(arxiv_id, None)
+            if not record:
+                continue
+            removed += 1
+            if record.get("pdf_file"):
+                (self._dir / record["pdf_file"]).unlink(missing_ok=True)
+            if record.get("screenshot_file"):
+                (self.screenshots_dir / record["screenshot_file"]).unlink(
+                    missing_ok=True
+                )
+            if record.get("card_file"):
+                (self.cards_dir / record["card_file"]).unlink(missing_ok=True)
+        if removed > 0:
+            self._save()
+        return removed
+
     def clear_all(self) -> int:
-        """清空全部记录与 PDF 文件（关闭存储时调用），返回清除的记录数。"""
+        """清空全部记录与 PDF / 截图 / 卡片（关闭存储时调用），返回清除的记录数。"""
         count = len(self._data)
         self._data = {}
         self._save()
-        if self._dir.is_dir():
-            for path in self._dir.glob("*.pdf"):
-                path.unlink(missing_ok=True)
+        for directory in (self._dir, self.screenshots_dir, self.cards_dir):
+            if directory.is_dir():
+                for path in directory.iterdir():
+                    if path.is_file():
+                        path.unlink(missing_ok=True)
         return count
 
     def total_size_bytes(self) -> int:
-        """返回 papers 目录中所有 PDF 的总字节数。"""
-        if not self._dir.is_dir():
-            return 0
-        return sum(p.stat().st_size for p in self._dir.glob("*.pdf"))
+        """返回论文库（PDF + 截图 + 卡片）的总字节数。"""
+        total = 0
+        for directory in (self._dir, self.screenshots_dir, self.cards_dir):
+            if directory.is_dir():
+                total += sum(
+                    p.stat().st_size for p in directory.iterdir() if p.is_file()
+                )
+        return total
 
     def cleanup_old(self) -> int:
-        """清理超过保留天数的记录与不再被引用的旧 PDF，返回清理数量。"""
+        """清理超过保留天数的记录与不再被引用的旧文件，返回清理数量。"""
         cutoff = time.time() - self._retention_days * 86400
         removed = 0
         for arxiv_id in list(self._data.keys()):
             if self._data[arxiv_id].get("sent_at", 0) < cutoff:
-                pdf_file = self._data[arxiv_id].get("pdf_file")
-                if pdf_file:
-                    (self._dir / pdf_file).unlink(missing_ok=True)
+                for key, directory in (
+                    ("pdf_file", self._dir),
+                    ("screenshot_file", self.screenshots_dir),
+                    ("card_file", self.cards_dir),
+                ):
+                    filename = self._data[arxiv_id].get(key)
+                    if filename:
+                        (directory / filename).unlink(missing_ok=True)
                 del self._data[arxiv_id]
                 removed += 1
         if removed > 0:
             self._save()
 
-        # 清理没有元数据记录引用的孤立 PDF（如下载后未发送的）
-        referenced = {r.get("pdf_file") for r in self._data.values()}
-        if self._dir.is_dir():
-            for path in self._dir.glob("*.pdf"):
-                if path.name not in referenced and path.stat().st_mtime < cutoff:
-                    path.unlink(missing_ok=True)
+        # 清理没有元数据记录引用的孤立文件（如下载后未发送的）
+        for key, directory, pattern in (
+            ("pdf_file", self._dir, "*.pdf"),
+            ("screenshot_file", self.screenshots_dir, "*.png"),
+            ("card_file", self.cards_dir, "*.*"),
+        ):
+            referenced = {r.get(key) for r in self._data.values()}
+            if directory.is_dir():
+                for path in directory.glob(pattern):
+                    if (
+                        path.is_file()
+                        and path.name not in referenced
+                        and path.stat().st_mtime < cutoff
+                    ):
+                        path.unlink(missing_ok=True)
         return removed

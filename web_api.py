@@ -151,7 +151,12 @@ class ArxivWebAPI:
         if not record:
             return error_response("论文不存在", status_code=404)
         return json_response(
-            {**record, "has_pdf": store.pdf_path(arxiv_id) is not None}
+            {
+                **record,
+                "has_pdf": store.pdf_path(arxiv_id) is not None,
+                "has_screenshot": store.screenshot_path(arxiv_id) is not None,
+                "has_card": store.card_path(arxiv_id) is not None,
+            }
         )
 
     async def api_paper_pdf(self):
@@ -168,6 +173,52 @@ class ArxivWebAPI:
             pdf_path,
             filename=pdf_path.name,
             content_type="application/pdf",
+        )
+
+    async def api_paper_screenshot(self):
+        """返回论文对应的 PDF 首页截图。"""
+        store = self.plugin._paper_store
+        arxiv_id = request.query.get("arxiv_id", "")
+        if not store or not arxiv_id:
+            return error_response("缺少 arxiv_id 参数")
+
+        path = store.screenshot_path(arxiv_id)
+        if not path:
+            return error_response("该论文没有可用的首页截图", status_code=404)
+        return file_response(path, filename=path.name, content_type="image/png")
+
+    async def api_paper_card(self):
+        """返回论文对应的按图发送卡片图片。"""
+        store = self.plugin._paper_store
+        arxiv_id = request.query.get("arxiv_id", "")
+        if not store or not arxiv_id:
+            return error_response("缺少 arxiv_id 参数")
+
+        path = store.card_path(arxiv_id)
+        if not path:
+            return error_response("该论文没有可用的卡片图片", status_code=404)
+        suffix = path.suffix.lstrip(".").lower() or "jpeg"
+        return file_response(path, filename=path.name, content_type=f"image/{suffix}")
+
+    async def api_papers_delete(self):
+        """批量删除论文记录及其关联文件。"""
+        store = self.plugin._paper_store
+        if not store:
+            return error_response("论文库未初始化", status_code=503)
+
+        body = await request.json(default={}) or {}
+        arxiv_ids = body.get("arxiv_ids", [])
+        if not isinstance(arxiv_ids, list) or not arxiv_ids:
+            return error_response("缺少 arxiv_ids 列表")
+        arxiv_ids = [str(i) for i in arxiv_ids]
+
+        removed = store.delete_papers(arxiv_ids)
+        return json_response(
+            {
+                "removed": removed,
+                "count": len(store.list_papers(limit=100000)[1]),
+                "total_size_bytes": store.total_size_bytes(),
+            }
         )
 
     async def api_papers_cleanup(self):
@@ -327,7 +378,13 @@ class ArxivWebAPI:
         if plugin._history:
             plugin._history.mark_sent_batch(session, [paper.arxiv_id])
         if plugin._paper_store and plugin._paper_store_enabled:
-            plugin._paper_store.record(paper, session)
+            artifacts = plugin._pending_artifacts.pop(paper.arxiv_id, {})
+            plugin._paper_store.record(
+                paper,
+                session,
+                screenshot_file=artifacts.get("screenshot_file", ""),
+                card_file=artifacts.get("card_file", ""),
+            )
 
         logger.info("WebUI 手动发送论文 %s 至 %s。", paper.arxiv_id, session)
         return json_response({"ok": True, "chains": len(chains)})
@@ -350,6 +407,24 @@ def register_web_routes(plugin: ArxivPlugin) -> None:
         (f"/{PLUGIN_NAME}/papers", api.api_papers, ["GET"], "已发送论文列表"),
         (f"/{PLUGIN_NAME}/papers/detail", api.api_paper_detail, ["GET"], "论文详情"),
         (f"/{PLUGIN_NAME}/papers/pdf", api.api_paper_pdf, ["GET"], "论文 PDF 文件"),
+        (
+            f"/{PLUGIN_NAME}/papers/screenshot",
+            api.api_paper_screenshot,
+            ["GET"],
+            "论文 PDF 首页截图",
+        ),
+        (
+            f"/{PLUGIN_NAME}/papers/card",
+            api.api_paper_card,
+            ["GET"],
+            "论文按图发送卡片图片",
+        ),
+        (
+            f"/{PLUGIN_NAME}/papers/delete",
+            api.api_papers_delete,
+            ["POST"],
+            "批量删除论文记录",
+        ),
         (
             f"/{PLUGIN_NAME}/papers/cleanup",
             api.api_papers_cleanup,

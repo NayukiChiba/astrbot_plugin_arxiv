@@ -77,6 +77,8 @@ class ArxivPlugin(Star):
         self._paper_store: PaperStore | None = None
         self._cron_job_id: str = ""
         self._bestMirror: str = ""
+        # 论文产物（截图/卡片）文件名暂存，键为 arxiv_id，供 record 时读取
+        self._pending_artifacts: dict[str, dict[str, str]] = {}
 
     # ── 便捷配置访问 ──────────────────────────────────────────
 
@@ -395,7 +397,13 @@ class ArxivPlugin(Star):
         )
         if self._paper_store and self._paper_store_enabled:
             for paper in unsent_papers:
-                self._paper_store.record(paper, session)
+                artifacts = self._pending_artifacts.pop(paper.arxiv_id, {})
+                self._paper_store.record(
+                    paper,
+                    session,
+                    screenshot_file=artifacts.get("screenshot_file", ""),
+                    card_file=artifacts.get("card_file", ""),
+                )
         logger.info(
             "ArXiv 推送至 %s：成功发送 %d 篇论文。",
             session,
@@ -666,7 +674,7 @@ class ArxivPlugin(Star):
 
         # 按图发送：整篇论文渲染为一张卡片图片
         if send_as_image:
-            image_chains = await self._build_image_paper_chains(
+            image_chains, card_path = await self._build_image_paper_chains(
                 paper,
                 index=index,
                 abstract_text=abstract_text if send_abstract else "",
@@ -676,9 +684,11 @@ class ArxivPlugin(Star):
                 extra_message=pdf_skip_reason,
             )
             if image_chains is not None:
+                self._record_artifacts(paper, screenshot_path, card_path)
                 return image_chains
             logger.warning("[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id)
 
+        self._record_artifacts(paper, screenshot_path, "")
         return formatter.build_paper_chains(
             paper,
             index=index,
@@ -702,14 +712,15 @@ class ArxivPlugin(Star):
         screenshot_path: str = "",
         pdf_path: str = "",
         extra_message: str = "",
-    ) -> list[MessageChain] | None:
+    ) -> tuple[list[MessageChain] | None, str]:
         """将整篇论文渲染为一张卡片图片（按图发送模式）。
 
         元信息、摘要与 AI 总结合并渲染为一张 HTML 卡片图片；
         PDF 首页截图以 Base64 内嵌进卡片；PDF 附件仍单独发送。
 
         Returns:
-            消息链列表；渲染失败时返回 None，由调用方回退为文本模式。
+            (消息链列表, 卡片图片本地路径)；渲染失败时返回 (None, "")，
+            由调用方回退为文本模式。
         """
         screenshot_b64 = ""
         if screenshot_path:
@@ -744,7 +755,7 @@ class ArxivPlugin(Star):
             )
         except Exception:
             logger.exception("[%s] 论文卡片渲染失败。", paper.arxiv_id)
-            return None
+            return None, ""
 
         img_chain = MessageChain()
         img_chain.chain.append(Image.fromFileSystem(str(rendered_path)))
@@ -757,7 +768,36 @@ class ArxivPlugin(Star):
             pdf_chain.chain.append(File(name=pdf_name, file=pdf_path))
             chains.append(pdf_chain)
 
-        return chains
+        return chains, str(rendered_path)
+
+    def _record_artifacts(
+        self,
+        paper: arxiv_client.ArxivPaper,
+        screenshot_path: str,
+        card_path: str,
+    ) -> None:
+        """把论文的 PDF 首页截图与按图发送卡片持久化到论文库（开启存储时）。
+
+        复制文件到论文库目录，实际写入元数据由发送方在 record() 时完成。
+        文件名暂存到 ``_pending_artifacts``，供 ``_send_papers_to_session``
+        在 record 时读取。
+        """
+        if not (self._paper_store and self._paper_store_enabled):
+            return
+        screenshot_file = (
+            self._paper_store.save_screenshot(paper.arxiv_id, Path(screenshot_path))
+            if screenshot_path
+            else ""
+        )
+        card_file = (
+            self._paper_store.save_card(paper.arxiv_id, Path(card_path))
+            if card_path
+            else ""
+        )
+        self._pending_artifacts[paper.arxiv_id] = {
+            "screenshot_file": screenshot_file,
+            "card_file": card_file,
+        }
 
     async def _build_info_chains(
         self,
@@ -796,7 +836,7 @@ class ArxivPlugin(Star):
 
             # 按图发送：元信息与摘要以一张卡片图片呈现
             if send_as_image:
-                image_chains = await self._build_image_paper_chains(
+                image_chains, _card_path = await self._build_image_paper_chains(
                     paper,
                     index=i,
                     abstract_text=abstract_text if send_abstract else "",
