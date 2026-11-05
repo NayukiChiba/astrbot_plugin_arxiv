@@ -15,11 +15,17 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, file_response, json_response, request
 
 from . import arxiv_client, formatter, image_render
+from .send_options import SendOptions
 
 if TYPE_CHECKING:
     from .main import ArxivPlugin
 
 PLUGIN_NAME = "astrbot_plugin_arxiv"
+
+
+def _opt_bool(value: Any) -> bool | None:
+    """规范化请求体中的可选布尔值：None 保持 None，其余转 bool。"""
+    return None if value is None else bool(value)
 
 
 def paper_to_dict(paper: arxiv_client.ArxivPaper) -> dict[str, Any]:
@@ -504,52 +510,8 @@ class ArxivWebAPI:
         session = str(body.get("session", "")).strip()
         if not isinstance(paper_data, dict) or not paper_data.get("arxiv_id"):
             return error_response("缺少 paper 字段")
-        if ":" not in session:
-            return error_response(
-                "session 必须是合法的 UMO（如 aiocqhttp:GroupMessage:123）"
-            )
-
-        plugin = self.plugin
         paper = paper_from_dict(paper_data)
-        text_format = plugin.text_format_for_session(
-            session,
-            str(body.get("text_format", "auto")),
-        )
-        # 布尔覆盖参数：未传时保持 None（跟随配置）
-        overrides = {}
-        for key in ("send_as_image", "attach_pdf", "screenshot_pdf", "send_abstract"):
-            value = body.get(key)
-            if value is not None:
-                overrides[key] = bool(value)
-        image_template = str(body.get("image_template") or "").strip() or None
-
-        chains = await plugin._process_papers(
-            [paper],
-            text_format=text_format,
-            image_template=image_template,
-            **overrides,
-        )
-        if not chains:
-            return error_response("论文处理失败，未生成任何消息", status_code=500)
-
-        await plugin._deliver_chains(session, chains)
-
-        # 记录去重历史与论文库（论文库仅在开启存储时写入）
-        if plugin._history:
-            plugin._history.mark_sent_batch(session, [paper.arxiv_id])
-        if plugin._paper_store and plugin._paper_store_enabled:
-            artifacts = plugin._pending_artifacts.pop(paper.arxiv_id, {})
-            plugin._paper_store.record(
-                paper,
-                session,
-                screenshot_file=artifacts.get("screenshot_file", ""),
-                card_file=artifacts.get("card_file", ""),
-                abstract_zh=artifacts.get("abstract_zh", ""),
-                llm_summary=artifacts.get("llm_summary", ""),
-            )
-
-        logger.info("WebUI 手动发送论文 %s 至 %s。", paper.arxiv_id, session)
-        return json_response({"ok": True, "chains": len(chains)})
+        return await self._send_and_record(paper, session, body, mark_sent=True)
 
     async def api_resend(self):
         """把论文库中已推送的论文重新发送到指定会话。"""
@@ -559,50 +521,62 @@ class ArxivWebAPI:
         store = self.plugin._paper_store
         if not store or not arxiv_id:
             return error_response("缺少 arxiv_id 参数")
+
+        record = store.get(arxiv_id)
+        if not record:
+            return error_response("论文不存在", status_code=404)
+        paper = paper_from_dict(record)
+        return await self._send_and_record(paper, session, body, mark_sent=False)
+
+    async def _send_and_record(
+        self,
+        paper: arxiv_client.ArxivPaper,
+        session: str,
+        body: dict[str, Any],
+        *,
+        mark_sent: bool,
+    ):
+        """处理单篇论文并发送到会话，按需记录去重历史与论文库。
+
+        send 与 resend 的公共逻辑，仅论文来源与是否标记去重历史不同。
+
+        Args:
+            paper: 待发送论文。
+            session: 目标会话 UMO。
+            body: 原始请求体（读取 text_format 与覆盖参数）。
+            mark_sent: 是否在去重历史中标记（重发不占用去重记录）。
+        """
+        session = session.strip()
         if ":" not in session:
             return error_response(
                 "session 必须是合法的 UMO（如 aiocqhttp:GroupMessage:123）"
             )
 
-        record = store.get(arxiv_id)
-        if not record:
-            return error_response("论文不存在", status_code=404)
-
         plugin = self.plugin
-        paper = paper_from_dict(record)
-        text_format = plugin.text_format_for_session(
-            session, str(body.get("text_format", "auto"))
+        options = SendOptions(
+            text_format=plugin.text_format_for_session(
+                session, str(body.get("text_format", "auto"))
+            ),
+            send_as_image=_opt_bool(body.get("send_as_image")),
+            attach_pdf=_opt_bool(body.get("attach_pdf")),
+            screenshot_pdf=_opt_bool(body.get("screenshot_pdf")),
+            send_abstract=_opt_bool(body.get("send_abstract")),
+            image_template=str(body.get("image_template") or "").strip() or None,
         )
-        # 布尔覆盖参数：未传时保持 None（跟随配置）
-        overrides = {}
-        for key in ("send_as_image", "attach_pdf", "screenshot_pdf", "send_abstract"):
-            value = body.get(key)
-            if value is not None:
-                overrides[key] = bool(value)
-        image_template = str(body.get("image_template") or "").strip() or None
-
-        chains = await plugin._process_papers(
-            [paper],
-            text_format=text_format,
-            image_template=image_template,
-            **overrides,
-        )
-        if not chains:
+        results = await plugin._process_papers([paper], options)
+        if not results:
             return error_response("论文处理失败，未生成任何消息", status_code=500)
 
+        chains = [c for r in results for c in r.chains]
         await plugin._deliver_chains(session, chains)
-        # 重发也更新论文库会话记录
-        if plugin._paper_store_enabled:
-            artifacts = plugin._pending_artifacts.pop(paper.arxiv_id, {})
-            store.record(
-                paper,
-                session,
-                screenshot_file=artifacts.get("screenshot_file", ""),
-                card_file=artifacts.get("card_file", ""),
-                abstract_zh=artifacts.get("abstract_zh", ""),
-                llm_summary=artifacts.get("llm_summary", ""),
-            )
-        logger.info("WebUI 重发论文 %s 至 %s。", arxiv_id, session)
+
+        # 去重历史与论文库（论文库仅在开启存储时写入；重发不占用去重记录）
+        if mark_sent and plugin._history:
+            plugin._history.mark_sent_batch(session, [paper.arxiv_id])
+        for r in results:
+            plugin._store_record(r.paper, session, r.artifacts)
+
+        logger.info("WebUI 发送论文 %s 至 %s。", paper.arxiv_id, session)
         return json_response({"ok": True, "chains": len(chains)})
 
     async def api_trigger_push(self):
