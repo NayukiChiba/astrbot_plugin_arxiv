@@ -425,3 +425,49 @@ a.btn {
   align-items: center;
   gap: 8px;
 }
+
+/* ── 实例级适配编辑器 ────────────────────── */
+
+.instances-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.btn.small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.instance-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border: 1px dashed #e2e6ec;
+  border-radius: 8px;
+}
+
+.instance-row .inst-session {
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.instance-row .inst-format {
+  width: 96px;
+}
+
+.instance-row .inst-bot-name {
+  width: 110px;
+}
+
+.instance-row .check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #555c66;
+  white-space: nowrap;
+}

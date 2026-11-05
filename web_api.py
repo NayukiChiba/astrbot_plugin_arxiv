@@ -515,22 +515,19 @@ class ArxivWebAPI:
             session,
             str(body.get("text_format", "auto")),
         )
-        send_as_image = body.get("send_as_image")
-        if send_as_image is not None:
-            send_as_image = bool(send_as_image)
-        attach_pdf = body.get("attach_pdf")
-        if attach_pdf is not None:
-            attach_pdf = bool(attach_pdf)
-        screenshot_pdf = body.get("screenshot_pdf")
-        if screenshot_pdf is not None:
-            screenshot_pdf = bool(screenshot_pdf)
+        # 布尔覆盖参数：未传时保持 None（跟随配置）
+        overrides = {}
+        for key in ("send_as_image", "attach_pdf", "screenshot_pdf", "send_abstract"):
+            value = body.get(key)
+            if value is not None:
+                overrides[key] = bool(value)
+        image_template = str(body.get("image_template") or "").strip() or None
 
         chains = await plugin._process_papers(
             [paper],
             text_format=text_format,
-            send_as_image=send_as_image,
-            attach_pdf=attach_pdf,
-            screenshot_pdf=screenshot_pdf,
+            image_template=image_template,
+            **overrides,
         )
         if not chains:
             return error_response("论文处理失败，未生成任何消息", status_code=500)
@@ -576,22 +573,19 @@ class ArxivWebAPI:
         text_format = plugin.text_format_for_session(
             session, str(body.get("text_format", "auto"))
         )
-        send_as_image = body.get("send_as_image")
-        if send_as_image is not None:
-            send_as_image = bool(send_as_image)
-        attach_pdf = body.get("attach_pdf")
-        if attach_pdf is not None:
-            attach_pdf = bool(attach_pdf)
-        screenshot_pdf = body.get("screenshot_pdf")
-        if screenshot_pdf is not None:
-            screenshot_pdf = bool(screenshot_pdf)
+        # 布尔覆盖参数：未传时保持 None（跟随配置）
+        overrides = {}
+        for key in ("send_as_image", "attach_pdf", "screenshot_pdf", "send_abstract"):
+            value = body.get(key)
+            if value is not None:
+                overrides[key] = bool(value)
+        image_template = str(body.get("image_template") or "").strip() or None
 
         chains = await plugin._process_papers(
             [paper],
             text_format=text_format,
-            send_as_image=send_as_image,
-            attach_pdf=attach_pdf,
-            screenshot_pdf=screenshot_pdf,
+            image_template=image_template,
+            **overrides,
         )
         if not chains:
             return error_response("论文处理失败，未生成任何消息", status_code=500)
