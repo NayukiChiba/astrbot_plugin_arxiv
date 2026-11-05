@@ -201,6 +201,10 @@ class PaperStore:
         """获取单篇论文的元数据。"""
         return self._data.get(arxiv_id)
 
+    def count(self) -> int:
+        """返回已记录论文的数量。"""
+        return len(self._data)
+
     def pdf_path(self, arxiv_id: str) -> Path | None:
         """获取论文对应的 PDF 文件路径，不存在时返回 None。"""
         record = self._data.get(arxiv_id)

@@ -90,8 +90,7 @@ class ArxivWebAPI:
             "total_size_bytes": 0,
         }
         if plugin._paper_store:
-            _, records = plugin._paper_store.list_papers(limit=100000)
-            storage["count"] = len(records)
+            storage["count"] = plugin._paper_store.count()
             storage["total_size_bytes"] = plugin._paper_store.total_size_bytes()
 
         return json_response(
@@ -122,14 +121,14 @@ class ArxivWebAPI:
 
     # ── 配置读写 ─────────────────────────────────────────────
 
-    # 允许在线编辑的配置组（键 -> 该组内允许更新的字段）
+    # 允许在线编辑的配置组（白名单）
     _EDITABLE_CONFIG = {
-        "arxiv_config": None,  # None 表示整组可改
-        "push_config": None,
-        "send_config": None,
-        "platform_config": None,
-        "storage_config": None,
-        "llm_config": None,
+        "arxiv_config",
+        "push_config",
+        "send_config",
+        "platform_config",
+        "storage_config",
+        "llm_config",
     }
 
     async def api_config_get(self):
@@ -140,7 +139,11 @@ class ArxivWebAPI:
         )
 
     async def api_config_update(self):
-        """更新指定配置组并保存。仅接受已知的六个配置组。"""
+        """更新指定配置组并保存。仅接受已知的六个配置组。
+
+        与现有组内配置合并（浅合并），未提交的键保持不变，
+        避免部分更新覆盖丢失。
+        """
         body = await request.json(default={}) or {}
         group = str(body.get("group", ""))
         values = body.get("values")
@@ -150,7 +153,7 @@ class ArxivWebAPI:
             return error_response("values 必须是对象")
 
         plugin = self.plugin
-        plugin.config[group] = values
+        plugin.config[group] = {**plugin.config.get(group, {}), **values}
         try:
             plugin.config.save_config()
         except Exception as e:
@@ -377,7 +380,7 @@ class ArxivWebAPI:
         return json_response(
             {
                 "removed": removed,
-                "count": len(store.list_papers(limit=100000)[1]),
+                "count": store.count(),
                 "total_size_bytes": store.total_size_bytes(),
             }
         )
@@ -392,7 +395,7 @@ class ArxivWebAPI:
         return json_response(
             {
                 "removed": removed,
-                "count": len(store.list_papers(limit=100000)[1]),
+                "count": store.count(),
                 "total_size_bytes": store.total_size_bytes(),
             }
         )
