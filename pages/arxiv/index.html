@@ -85,11 +85,39 @@
                 重发到会话
                 <input id="detail-session" class="input" list="session-list" placeholder="aiocqhttp:GroupMessage:123456" />
               </label>
-              <div class="panel-row">
+              <div class="send-grid">
+                <label>
+                  文本格式
+                  <select id="detail-format" class="input">
+                    <option value="auto">auto（跟随平台配置）</option>
+                    <option value="plain">plain</option>
+                    <option value="markdown">markdown</option>
+                  </select>
+                </label>
+                <label>
+                  卡片模板
+                  <input id="detail-template" class="input" list="template-list" placeholder="default" />
+                </label>
+              </div>
+              <div class="send-grid">
                 <label class="check">
                   <input id="detail-as-image" type="checkbox" />
                   按图发送
                 </label>
+                <label class="check">
+                  <input id="detail-send-abstract" type="checkbox" checked />
+                  包含摘要
+                </label>
+                <label class="check">
+                  <input id="detail-attach-pdf" type="checkbox" checked />
+                  附带 PDF
+                </label>
+                <label class="check">
+                  <input id="detail-screenshot" type="checkbox" checked />
+                  截图首页
+                </label>
+              </div>
+              <div class="panel-row">
                 <span class="spacer"></span>
                 <button id="btn-resend" class="btn primary">重发此论文</button>
               </div>
@@ -200,6 +228,25 @@
 
         <div class="settings-grid">
           <div class="settings-block">
+            <h3>ArXiv 获取</h3>
+            <label>学科分类（每行一个，如 cs.AI）
+              <textarea id="cfg-categories" class="input" rows="2"></textarea>
+            </label>
+            <label>关键词标签（每行一个，留空仅按分类筛选）
+              <textarea id="cfg-tags" class="input" rows="2"></textarea>
+            </label>
+            <label>每次推送/搜索最大论文数量
+              <input id="cfg-max-results" class="input num" type="number" min="1" max="20" />
+            </label>
+            <label>HTTP 请求超时（秒）
+              <input id="cfg-timeout" class="input num" type="number" min="5" max="120" />
+            </label>
+            <label>PDF 下载镜像站（每行一个，按优先级排列）
+              <textarea id="cfg-pdf-mirrors" class="input" rows="2"></textarea>
+            </label>
+          </div>
+
+          <div class="settings-block">
             <h3>定时推送</h3>
             <label>推送时间（HH:MM）
               <input id="cfg-push-time" class="input" placeholder="09:00" />
@@ -210,14 +257,52 @@
             <label>目标会话（每行一个 UMO）
               <textarea id="cfg-target-sessions" class="input" rows="3"></textarea>
             </label>
+            <label>已发送记录保留天数（去重）
+              <input id="cfg-history-days" class="input num" type="number" min="1" />
+            </label>
           </div>
 
           <div class="settings-block">
             <h3>发送内容</h3>
             <label class="check"><input id="cfg-send-abstract" type="checkbox" /> 发送摘要</label>
+            <label class="check"><input id="cfg-abstract-as-image" type="checkbox" /> 摘要渲染为图片</label>
             <label class="check"><input id="cfg-attach-pdf" type="checkbox" /> 附带 PDF</label>
             <label class="check"><input id="cfg-screenshot-pdf" type="checkbox" /> 截图 PDF 首页</label>
-            <label class="check"><input id="cfg-send-as-image" type="checkbox" /> 按图发送</label>
+            <label>截图 DPI（72~300）
+              <input id="cfg-screenshot-dpi" class="input num" type="number" min="72" max="300" />
+            </label>
+            <label>PDF 最大体积（MB）
+              <input id="cfg-max-pdf-size" class="input num" type="number" min="1" max="100" />
+            </label>
+          </div>
+
+          <div class="settings-block">
+            <h3>平台适配</h3>
+            <label class="check"><input id="cfg-send-as-image" type="checkbox" /> 按图发送（t2i 卡片）</label>
+            <label>卡片模板
+              <input id="cfg-image-template" class="input" list="template-list" placeholder="default" />
+            </label>
+            <label>默认平台文本格式
+              <select id="cfg-default-format" class="input">
+                <option value="plain">plain</option>
+                <option value="markdown">markdown</option>
+              </select>
+            </label>
+            <label>QQ 官方文本格式
+              <select id="cfg-qqofficial-format" class="input">
+                <option value="plain">plain</option>
+                <option value="markdown">markdown</option>
+              </select>
+            </label>
+            <label class="check"><input id="cfg-aiocqhttp-forward" type="checkbox" /> aiocqhttp 合并转发</label>
+            <label>合并转发机器人昵称
+              <input id="cfg-aiocqhttp-bot-name" class="input" placeholder="ArXiv Bot" />
+            </label>
+            <div class="instances-head">
+              <span class="muted">实例级适配（优先级最高）</span>
+              <button id="btn-add-instance" class="btn small">添加实例</button>
+            </div>
+            <div id="instances-list"></div>
           </div>
 
           <div class="settings-block">
@@ -236,7 +321,16 @@
                 <option value="llm_chinese">中文（LLM 翻译）</option>
               </select>
             </label>
+            <label>摘要翻译 LLM 提供商 ID（留空用默认）
+              <input id="cfg-translate-provider" class="input" placeholder="留空使用默认提供商" />
+            </label>
             <label class="check"><input id="cfg-llm-summarize" type="checkbox" /> 使用 LLM 总结论文</label>
+            <label>总结 LLM 提供商 ID（需视觉模型，留空用默认）
+              <input id="cfg-summarize-provider" class="input" placeholder="留空使用默认提供商" />
+            </label>
+            <label>自定义总结 Prompt（留空用默认）
+              <textarea id="cfg-summary-prompt" class="input" rows="3"></textarea>
+            </label>
           </div>
         </div>
 

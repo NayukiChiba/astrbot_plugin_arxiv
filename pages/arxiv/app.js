@@ -556,30 +556,84 @@ async function triggerPush() {
 
 // ── 设置（在线修改配置） ──────────────────────────────
 
+// 向实例级适配列表添加一行（entry 为空对象时添加空行）
+function addInstanceRow(entry = {}) {
+  const row = document.createElement("div");
+  row.className = "instance-row";
+  row.innerHTML = `
+    <input class="input inst-session" list="session-list" placeholder="机器人所在会话 UMO" value="${escapeHtml(entry.session || "")}" />
+    <select class="input inst-format">
+      <option value="plain">plain</option>
+      <option value="markdown">markdown</option>
+    </select>
+    <label class="check"><input type="checkbox" class="inst-forward" ${entry.use_forward ? "checked" : ""} /> 合并转发</label>
+    <input class="input inst-bot-name" placeholder="机器人昵称" value="${escapeHtml(entry.bot_name || "")}" />
+    <button class="btn inst-remove">删除</button>`;
+  row.querySelector(".inst-format").value = entry.text_format || "plain";
+  row.querySelector(".inst-remove").addEventListener("click", () => row.remove());
+  $("instances-list").appendChild(row);
+}
+
+// 多行文本框解析为非空行数组
+function configLines(id) {
+  return $(id).value
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 async function loadConfigForm() {
   try {
     const cfg = await bridge.apiGet("config");
     state.fullConfig = cfg;
+    const arxiv = cfg.arxiv_config || {};
     const push = cfg.push_config || {};
     const send = cfg.send_config || {};
     const pcfg = cfg.platform_config || {};
     const storage = cfg.storage_config || {};
     const llm = cfg.llm_config || {};
 
+    // ArXiv 获取
+    $("cfg-categories").value = (arxiv.categories || []).join("\n");
+    $("cfg-tags").value = (arxiv.tags || []).join("\n");
+    $("cfg-max-results").value = arxiv.max_results ?? 1;
+    $("cfg-timeout").value = arxiv.timeout_seconds ?? 30;
+    $("cfg-pdf-mirrors").value = (arxiv.pdf_mirrors || []).join("\n");
+
+    // 定时推送
     $("cfg-push-time").value = push.push_time || "09:00";
     $("cfg-push-timezone").value = push.push_timezone || "Asia/Shanghai";
     $("cfg-target-sessions").value = (push.target_sessions || []).join("\n");
+    $("cfg-history-days").value = push.history_retention_days ?? 30;
 
+    // 发送内容
     $("cfg-send-abstract").checked = send.send_abstract !== false;
+    $("cfg-abstract-as-image").checked = send.abstract_as_image === true;
     $("cfg-attach-pdf").checked = send.attach_pdf !== false;
     $("cfg-screenshot-pdf").checked = send.screenshot_pdf !== false;
-    $("cfg-send-as-image").checked = pcfg.send_as_image === true;
+    $("cfg-screenshot-dpi").value = send.screenshot_dpi ?? 150;
+    $("cfg-max-pdf-size").value = send.max_pdf_size_mb ?? 20;
 
+    // 平台适配
+    $("cfg-send-as-image").checked = pcfg.send_as_image === true;
+    $("cfg-image-template").value = pcfg.image_template || "default";
+    $("cfg-default-format").value = pcfg.default?.text_format || "plain";
+    $("cfg-qqofficial-format").value = pcfg.qqofficial?.text_format || "markdown";
+    $("cfg-aiocqhttp-forward").checked = pcfg.aiocqhttp?.use_forward === true;
+    $("cfg-aiocqhttp-bot-name").value = pcfg.aiocqhttp?.bot_name || "ArXiv Bot";
+    $("instances-list").innerHTML = "";
+    (pcfg.instances || []).forEach((entry) => addInstanceRow(entry));
+
+    // 论文库存储
     $("cfg-store-papers").checked = storage.store_papers !== false;
     $("cfg-retention-days").value = storage.paper_retention_days ?? 7;
 
+    // LLM 赋能
     $("cfg-abstract-mode").value = llm.abstract_mode || "original";
+    $("cfg-translate-provider").value = llm.translate_provider_id || "";
     $("cfg-llm-summarize").checked = llm.llm_summarize === true;
+    $("cfg-summarize-provider").value = llm.summarize_provider_id || "";
+    $("cfg-summary-prompt").value = llm.llm_summary_prompt || "";
 
     $("config-status").textContent = "";
   } catch (e) {
@@ -591,31 +645,69 @@ async function saveConfigForm() {
   const btn = $("btn-save-config");
   btn.disabled = true;
   try {
+    const full = state.fullConfig || {};
+    const pcfg = full.platform_config || {};
+    // 收集实例级适配行（跳过未填会话的行）
+    const instances = [...document.querySelectorAll("#instances-list .instance-row")]
+      .map((row) => ({
+        session: row.querySelector(".inst-session").value.trim(),
+        text_format: row.querySelector(".inst-format").value,
+        use_forward: row.querySelector(".inst-forward").checked,
+        bot_name: row.querySelector(".inst-bot-name").value.trim() || "ArXiv Bot",
+      }))
+      .filter((e) => e.session);
+
+    // 每组基于已读配置展开覆盖，避免丢失未在表单中暴露的键
     const updates = [
+      ["arxiv_config", {
+        ...(full.arxiv_config || {}),
+        categories: configLines("cfg-categories"),
+        tags: configLines("cfg-tags"),
+        max_results: Number($("cfg-max-results").value) || 1,
+        timeout_seconds: Number($("cfg-timeout").value) || 30,
+        pdf_mirrors: configLines("cfg-pdf-mirrors"),
+      }],
       ["push_config", {
+        ...(full.push_config || {}),
         push_time: $("cfg-push-time").value.trim() || "09:00",
         push_timezone: $("cfg-push-timezone").value.trim() || "Asia/Shanghai",
-        target_sessions: $("cfg-target-sessions").value
-          .split("\n").map((s) => s.trim()).filter(Boolean),
+        target_sessions: configLines("cfg-target-sessions"),
+        history_retention_days: Number($("cfg-history-days").value) || 30,
       }],
       ["send_config", {
-        ...(state.fullConfig?.send_config || {}),
+        ...(full.send_config || {}),
         send_abstract: $("cfg-send-abstract").checked,
+        abstract_as_image: $("cfg-abstract-as-image").checked,
         attach_pdf: $("cfg-attach-pdf").checked,
         screenshot_pdf: $("cfg-screenshot-pdf").checked,
+        screenshot_dpi: Number($("cfg-screenshot-dpi").value) || 150,
+        max_pdf_size_mb: Number($("cfg-max-pdf-size").value) || 20,
       }],
       ["platform_config", {
-        ...(state.fullConfig?.platform_config || {}),
+        ...pcfg,
         send_as_image: $("cfg-send-as-image").checked,
+        image_template: $("cfg-image-template").value.trim() || "default",
+        default: { ...(pcfg.default || {}), text_format: $("cfg-default-format").value },
+        aiocqhttp: {
+          ...(pcfg.aiocqhttp || {}),
+          use_forward: $("cfg-aiocqhttp-forward").checked,
+          bot_name: $("cfg-aiocqhttp-bot-name").value.trim() || "ArXiv Bot",
+        },
+        qqofficial: { ...(pcfg.qqofficial || {}), text_format: $("cfg-qqofficial-format").value },
+        instances,
       }],
       ["storage_config", {
+        ...(full.storage_config || {}),
         store_papers: $("cfg-store-papers").checked,
         paper_retention_days: Number($("cfg-retention-days").value) || 7,
       }],
       ["llm_config", {
-        ...(state.fullConfig?.llm_config || {}),
+        ...(full.llm_config || {}),
         abstract_mode: $("cfg-abstract-mode").value,
+        translate_provider_id: $("cfg-translate-provider").value.trim(),
         llm_summarize: $("cfg-llm-summarize").checked,
+        summarize_provider_id: $("cfg-summarize-provider").value.trim(),
+        llm_summary_prompt: $("cfg-summary-prompt").value,
       }],
     ];
     for (const [group, values] of updates) {
@@ -649,7 +741,12 @@ async function resendDetail() {
     const res = await bridge.apiPost("resend", {
       arxiv_id: arxivId,
       session,
+      text_format: $("detail-format").value,
       send_as_image: $("detail-as-image").checked,
+      send_abstract: $("detail-send-abstract").checked,
+      attach_pdf: $("detail-attach-pdf").checked,
+      screenshot_pdf: $("detail-screenshot").checked,
+      image_template: $("detail-template").value.trim() || undefined,
     });
     toast(`重发成功，共 ${res.chains} 条消息`);
     await loadOverview();
@@ -736,6 +833,7 @@ function bindEvents() {
   $("btn-resend").addEventListener("click", resendDetail);
   $("btn-save-config").addEventListener("click", saveConfigForm);
   $("btn-reload-config").addEventListener("click", loadConfigForm);
+  $("btn-add-instance").addEventListener("click", () => addInstanceRow());
   $("btn-reload-library").addEventListener("click", async () => {
     await loadOverview();
     await loadLibrary();

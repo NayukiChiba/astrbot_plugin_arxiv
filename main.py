@@ -506,6 +506,8 @@ class ArxivPlugin(Star):
         send_as_image: bool | None = None,
         attach_pdf: bool | None = None,
         screenshot_pdf: bool | None = None,
+        send_abstract: bool | None = None,
+        image_template: str | None = None,
     ) -> list[MessageChain]:
         """处理论文列表，生成消息链。
 
@@ -515,6 +517,8 @@ class ArxivPlugin(Star):
             send_as_image: 覆盖按图发送配置，None 时跟随配置。
             attach_pdf: 覆盖附带 PDF 配置，None 时跟随配置。
             screenshot_pdf: 覆盖截图 PDF 配置，None 时跟随配置。
+            send_abstract: 覆盖发送摘要配置，None 时跟随配置。
+            image_template: 覆盖卡片模板，None 时跟随配置。
         """
         logger.info("开始处理 %d 篇论文。", len(papers))
         chains: list[MessageChain] = []
@@ -529,6 +533,8 @@ class ArxivPlugin(Star):
                     send_as_image=send_as_image,
                     attach_pdf=attach_pdf,
                     screenshot_pdf=screenshot_pdf,
+                    send_abstract=send_abstract,
+                    image_template=image_template,
                 )
                 chains.extend(paper_chains)
                 logger.info(
@@ -551,6 +557,8 @@ class ArxivPlugin(Star):
         send_as_image: bool | None = None,
         attach_pdf: bool | None = None,
         screenshot_pdf: bool | None = None,
+        send_abstract: bool | None = None,
+        image_template: str | None = None,
     ) -> list[MessageChain]:
         """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。"""
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
@@ -565,13 +573,15 @@ class ArxivPlugin(Star):
             attach_pdf = self._send_cfg.get("attach_pdf", False)
         if screenshot_pdf is None:
             screenshot_pdf = self._send_cfg.get("screenshot_pdf", True)
+        if send_abstract is None:
+            send_abstract = self._send_cfg.get("send_abstract", True)
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
 
         # 摘要处理
         abstract_zh = ""
-        if self._send_cfg.get("send_abstract", True):
+        if send_abstract:
             abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
                 provider_id = self._llm_cfg.get("translate_provider_id", "")
@@ -664,7 +674,6 @@ class ArxivPlugin(Star):
         use_abstract_image = (
             self._send_cfg.get("abstract_as_image", True) and not send_as_image
         )
-        send_abstract = self._send_cfg.get("send_abstract", True)
 
         if send_abstract and abstract_text and use_abstract_image:
             logger.info("[%s] 渲染摘要为图片...", paper.arxiv_id)
@@ -696,6 +705,7 @@ class ArxivPlugin(Star):
                 screenshot_path=screenshot_path,
                 pdf_path=pdf_path_str,
                 extra_message=pdf_skip_reason,
+                image_template=image_template,
             )
             if image_chains is not None:
                 self._record_artifacts(
@@ -738,11 +748,15 @@ class ArxivPlugin(Star):
         screenshot_path: str = "",
         pdf_path: str = "",
         extra_message: str = "",
+        image_template: str | None = None,
     ) -> tuple[list[MessageChain] | None, str]:
         """将整篇论文渲染为一张卡片图片（按图发送模式）。
 
         元信息、摘要与 AI 总结合并渲染为一张 HTML 卡片图片；
         PDF 首页截图以 Base64 内嵌进卡片；PDF 附件仍单独发送。
+
+        Args:
+            image_template: 覆盖卡片模板名，None 时跟随平台配置。
 
         Returns:
             (消息链列表, 卡片图片本地路径)；渲染失败时返回 (None, "")，
@@ -767,7 +781,9 @@ class ArxivPlugin(Star):
             screenshot_b64=screenshot_b64,
             extra_message=extra_message,
         )
-        template_name = self._platform_cfg.get("image_template", "default")
+        template_name = image_template or self._platform_cfg.get(
+            "image_template", "default"
+        )
         try:
             template_str = image_render.load_template(
                 self._data_dir / "templates",
