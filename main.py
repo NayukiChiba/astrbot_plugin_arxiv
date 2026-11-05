@@ -502,6 +502,8 @@ class ArxivPlugin(Star):
         *,
         text_format: str = "plain",
         send_as_image: bool | None = None,
+        attach_pdf: bool | None = None,
+        screenshot_pdf: bool | None = None,
     ) -> list[MessageChain]:
         """处理论文列表，生成消息链。
 
@@ -509,6 +511,8 @@ class ArxivPlugin(Star):
             papers: 论文列表。
             text_format: 文本格式（plain / markdown）。
             send_as_image: 覆盖按图发送配置，None 时跟随配置。
+            attach_pdf: 覆盖附带 PDF 配置，None 时跟随配置。
+            screenshot_pdf: 覆盖截图 PDF 配置，None 时跟随配置。
         """
         logger.info("开始处理 %d 篇论文。", len(papers))
         chains: list[MessageChain] = []
@@ -521,6 +525,8 @@ class ArxivPlugin(Star):
                     index=i,
                     text_format=text_format,
                     send_as_image=send_as_image,
+                    attach_pdf=attach_pdf,
+                    screenshot_pdf=screenshot_pdf,
                 )
                 chains.extend(paper_chains)
                 logger.info(
@@ -541,6 +547,8 @@ class ArxivPlugin(Star):
         index: int = 0,
         text_format: str = "plain",
         send_as_image: bool | None = None,
+        attach_pdf: bool | None = None,
+        screenshot_pdf: bool | None = None,
     ) -> list[MessageChain]:
         """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。"""
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
@@ -548,9 +556,13 @@ class ArxivPlugin(Star):
         summary_text = ""
         screenshot_path = ""
         pdf_path_str = ""
-        # send_as_image 为 None 时跟随配置，否则使用调用方覆盖值（WebUI 测试用）
+        # 覆盖参数为 None 时跟随配置，否则使用调用方覆盖值（WebUI 测试用）
         if send_as_image is None:
             send_as_image = self._platform_cfg.get("send_as_image", False)
+        if attach_pdf is None:
+            attach_pdf = self._send_cfg.get("attach_pdf", False)
+        if screenshot_pdf is None:
+            screenshot_pdf = self._send_cfg.get("screenshot_pdf", True)
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -572,9 +584,7 @@ class ArxivPlugin(Star):
 
         # 是否需要下载 PDF（截图、附件、LLM 总结都需要 PDF）
         need_pdf = (
-            self._send_cfg.get("screenshot_pdf", True)
-            or self._send_cfg.get("attach_pdf", False)
-            or self._llm_cfg.get("llm_summarize", False)
+            screenshot_pdf or attach_pdf or self._llm_cfg.get("llm_summarize", False)
         )
 
         downloaded_pdf: Path | None = None
@@ -606,9 +616,7 @@ class ArxivPlugin(Star):
                 pdf_skip_reason = "⚠️ PDF 下载失败（网络超时或服务器错误），已跳过。"
 
         # PDF 首页截图（screenshot_pdf 或 LLM 总结开启时需要）
-        need_screenshot = self._send_cfg.get(
-            "screenshot_pdf", True
-        ) or self._llm_cfg.get("llm_summarize", False)
+        need_screenshot = screenshot_pdf or self._llm_cfg.get("llm_summarize", False)
         if downloaded_pdf and need_screenshot:
             dpi = self._send_cfg.get("screenshot_dpi", 150)
             screenshot = pdf_handler.screenshot_first_page(
@@ -669,7 +677,7 @@ class ArxivPlugin(Star):
                 )
 
         # PDF 附件
-        if downloaded_pdf and self._send_cfg.get("attach_pdf", False):
+        if downloaded_pdf and attach_pdf:
             pdf_path_str = str(downloaded_pdf)
 
         # 按图发送：整篇论文渲染为一张卡片图片

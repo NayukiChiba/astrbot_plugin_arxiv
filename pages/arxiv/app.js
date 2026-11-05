@@ -13,6 +13,8 @@ const state = {
   preview: null,
   previewTab: "plain",
   detailId: null,
+  detail: null,
+  fullConfig: null,
 };
 
 // ── 工具 ──────────────────────────────────────────────
@@ -84,6 +86,11 @@ async function loadOverview() {
   // 会话候选列表
   $("session-list").innerHTML = (cfg.target_sessions || [])
     .map((s) => `<option value="${escapeHtml(s)}"></option>`)
+    .join("");
+
+  // 卡片模板候选列表
+  $("template-list").innerHTML = (res.templates || [])
+    .map((t) => `<option value="${escapeHtml(t)}"></option>`)
     .join("");
 
   updateStorageInfo();
@@ -399,6 +406,7 @@ async function loadPreview() {
       paper,
       send_as_image: $("send-as-image").checked,
       send_abstract: $("send-abstract").checked,
+      image_template: $("send-template").value.trim() || undefined,
     });
     renderPreview();
   } catch (e) {
@@ -429,6 +437,10 @@ async function sendPaper() {
       session,
       text_format: $("send-format").value,
       send_as_image: $("send-as-image").checked,
+      send_abstract: $("send-abstract").checked,
+      attach_pdf: $("send-attach-pdf").checked,
+      screenshot_pdf: $("send-screenshot").checked,
+      image_template: $("send-template").value.trim() || undefined,
     });
     toast(`发送成功，共 ${res.chains} 条消息`);
     await loadOverview();
@@ -455,6 +467,114 @@ async function triggerPush() {
   }
 }
 
+// ── 设置（在线修改配置） ──────────────────────────────
+
+async function loadConfigForm() {
+  try {
+    const cfg = await bridge.apiGet("config");
+    state.fullConfig = cfg;
+    const push = cfg.push_config || {};
+    const send = cfg.send_config || {};
+    const pcfg = cfg.platform_config || {};
+    const storage = cfg.storage_config || {};
+    const llm = cfg.llm_config || {};
+
+    $("cfg-push-time").value = push.push_time || "09:00";
+    $("cfg-push-timezone").value = push.push_timezone || "Asia/Shanghai";
+    $("cfg-target-sessions").value = (push.target_sessions || []).join("\n");
+
+    $("cfg-send-abstract").checked = send.send_abstract !== false;
+    $("cfg-attach-pdf").checked = send.attach_pdf !== false;
+    $("cfg-screenshot-pdf").checked = send.screenshot_pdf !== false;
+    $("cfg-send-as-image").checked = pcfg.send_as_image === true;
+
+    $("cfg-store-papers").checked = storage.store_papers !== false;
+    $("cfg-retention-days").value = storage.paper_retention_days ?? 7;
+
+    $("cfg-abstract-mode").value = llm.abstract_mode || "original";
+    $("cfg-llm-summarize").checked = llm.llm_summarize === true;
+
+    $("config-status").textContent = "";
+  } catch (e) {
+    toast(`读取配置失败: ${e.message || e}`);
+  }
+}
+
+async function saveConfigForm() {
+  const btn = $("btn-save-config");
+  btn.disabled = true;
+  try {
+    const updates = [
+      ["push_config", {
+        push_time: $("cfg-push-time").value.trim() || "09:00",
+        push_timezone: $("cfg-push-timezone").value.trim() || "Asia/Shanghai",
+        target_sessions: $("cfg-target-sessions").value
+          .split("\n").map((s) => s.trim()).filter(Boolean),
+      }],
+      ["send_config", {
+        ...(state.fullConfig?.send_config || {}),
+        send_abstract: $("cfg-send-abstract").checked,
+        attach_pdf: $("cfg-attach-pdf").checked,
+        screenshot_pdf: $("cfg-screenshot-pdf").checked,
+      }],
+      ["platform_config", {
+        ...(state.fullConfig?.platform_config || {}),
+        send_as_image: $("cfg-send-as-image").checked,
+      }],
+      ["storage_config", {
+        store_papers: $("cfg-store-papers").checked,
+        paper_retention_days: Number($("cfg-retention-days").value) || 7,
+      }],
+      ["llm_config", {
+        ...(state.fullConfig?.llm_config || {}),
+        abstract_mode: $("cfg-abstract-mode").value,
+        llm_summarize: $("cfg-llm-summarize").checked,
+      }],
+    ];
+    for (const [group, values] of updates) {
+      await bridge.apiPost("config", { group, values });
+    }
+    $("config-status").textContent = "已保存，配置即时生效。";
+    toast("配置已保存");
+    await loadOverview();
+  } catch (e) {
+    toast(`保存失败: ${e.message || e}`);
+    $("config-status").textContent = "保存失败";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── 重发已推送论文 ─────────────────────────────────────
+
+async function resendDetail() {
+  const arxivId = state.detailId;
+  const session = $("detail-session").value.trim();
+  if (!arxivId) return;
+  if (!session) {
+    toast("请填写目标会话 UMO");
+    return;
+  }
+  const btn = $("btn-resend");
+  btn.disabled = true;
+  btn.textContent = "发送中…";
+  try {
+    const res = await bridge.apiPost("resend", {
+      arxiv_id: arxivId,
+      session,
+      send_as_image: $("detail-as-image").checked,
+    });
+    toast(`重发成功，共 ${res.chains} 条消息`);
+    $("detail-modal").classList.add("hidden");
+    await loadLibrary();
+  } catch (e) {
+    toast(`重发失败: ${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "重发此论文";
+  }
+}
+
 // ── 事件绑定与初始化 ──────────────────────────────────
 
 function bindEvents() {
@@ -462,8 +582,11 @@ function bindEvents() {
     tab.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
-      $("tab-library").classList.toggle("hidden", tab.dataset.tab !== "library");
-      $("tab-fetcher").classList.toggle("hidden", tab.dataset.tab !== "fetcher");
+      const name = tab.dataset.tab;
+      $("tab-library").classList.toggle("hidden", name !== "library");
+      $("tab-fetcher").classList.toggle("hidden", name !== "fetcher");
+      $("tab-settings").classList.toggle("hidden", name !== "settings");
+      if (name === "settings") loadConfigForm();
     });
   });
 
@@ -510,6 +633,9 @@ function bindEvents() {
   $("btn-send").addEventListener("click", sendPaper);
   $("btn-trigger").addEventListener("click", triggerPush);
   $("btn-cleanup").addEventListener("click", cleanupLibrary);
+  $("btn-resend").addEventListener("click", resendDetail);
+  $("btn-save-config").addEventListener("click", saveConfigForm);
+  $("btn-reload-config").addEventListener("click", loadConfigForm);
   $("btn-reload-library").addEventListener("click", async () => {
     await loadOverview();
     await loadLibrary();
