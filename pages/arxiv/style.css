@@ -25,19 +25,6 @@ body {
   font-weight: 700;
 }
 
-.badges {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.badge {
-  padding: 3px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.2);
-  font-size: 12px;
-}
-
 .tabs {
   display: flex;
   gap: 4px;

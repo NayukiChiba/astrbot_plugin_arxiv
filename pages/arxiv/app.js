@@ -71,19 +71,6 @@ async function loadOverview() {
   const res = await bridge.apiGet("overview");
   state.overview = res;
   const cfg = res.config;
-  const storage = res.storage;
-
-  const aioCfg = (cfg.platform_config || {}).aiocqhttp || {};
-  const badges = [
-    `推送 ${cfg.push_time}`,
-    `默认格式 ${(cfg.platform_config || {}).default?.text_format || "plain"}`,
-    cfg.send_as_image ? "按图发送" : "文本发送",
-    aioCfg.use_forward ? "aiocqhttp 合并转发" : "逐条发送",
-    storage.enabled ? `存储 ${storage.retention_days} 天` : "存储关闭",
-  ];
-  $("status-badges").innerHTML = badges
-    .map((b) => `<span class="badge">${escapeHtml(b)}</span>`)
-    .join("");
 
   // 会话候选列表
   $("session-list").innerHTML = (cfg.target_sessions || [])
