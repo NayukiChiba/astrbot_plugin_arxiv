@@ -51,3 +51,23 @@ class ProcessedPaper:
     paper: ArxivPaper
     chains: list[MessageChain] = field(default_factory=list)
     artifacts: PaperArtifacts = field(default_factory=PaperArtifacts)
+
+
+@dataclass
+class PreparedPaper:
+    """论文的平台无关处理产物，可跨会话复用。
+
+    由 ``_prepare_paper`` 生成：LLM 摘要翻译、PDF 下载、首页截图、
+    LLM 总结、摘要图片渲染、PDF 附件路径。这些操作（尤其 LLM 调用与
+    PDF 下载）成本最高且与目标平台无关，多会话推送时只处理一次，
+    各会话再按需格式化（``_format_prepared``）。
+    """
+
+    paper: ArxivPaper
+    abstract_text: str = ""
+    abstract_zh: str = ""
+    summary_text: str = ""
+    screenshot_path: str = ""
+    pdf_path_str: str = ""
+    abstract_image_path: str = ""
+    pdf_skip_reason: str = ""
