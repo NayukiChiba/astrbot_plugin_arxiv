@@ -14,6 +14,8 @@ const state = {
   previewTab: "plain",
   detailId: null,
   detail: null,
+  detailPreview: null,
+  detailPreviewTab: "plain",
   fullConfig: null,
 };
 
@@ -223,6 +225,15 @@ async function openDetail(arxivId) {
   document.querySelector('[data-dtab="summary"]').style.display = detail.llm_summary ? "" : "none";
   document.querySelector('[data-dtab="screenshot"]').style.display = detail.has_screenshot ? "" : "none";
   document.querySelector('[data-dtab="card"]').style.display = detail.has_card ? "" : "none";
+  // 重置发送预览状态，渲染卡片默认跟随当前按图发送配置
+  state.detailPreview = null;
+  state.detailPreviewTab = "plain";
+  document.querySelectorAll(".pvtab").forEach((t) =>
+    t.classList.toggle("active", t.dataset.pvtab === "plain")
+  );
+  $("detail-preview-as-image").checked = !!(
+    state.overview?.config?.send_as_image
+  );
   switchDetailTab("abstract", arxivId);
 }
 
@@ -234,6 +245,16 @@ function switchDetailTab(tab, arxivId) {
   const textEl = $("detail-abstract");
   const imgWrap = $("detail-image-wrap");
   const img = $("detail-image");
+  const panel = $("detail-preview-panel");
+  // 发送预览 tab：按当前配置渲染，其余 tab 隐藏该面板
+  if (tab === "preview") {
+    textEl.classList.add("hidden");
+    imgWrap.classList.add("hidden");
+    panel.classList.remove("hidden");
+    renderDetailPreview();
+    return;
+  }
+  panel.classList.add("hidden");
   // 文本类 tab：摘要（含中文翻译）与 AI 总结
   if (tab === "abstract" || tab === "summary") {
     if (tab === "abstract") {
@@ -269,6 +290,62 @@ function switchDetailTab(tab, arxivId) {
 async function bridgeImageUrl(endpoint, arxivId) {
   const res = await bridge.apiGet(endpoint, { arxiv_id: arxivId, format: "base64" });
   return res && res.data_url ? res.data_url : "";
+}
+
+// 渲染发送预览内容（纯文本 / Markdown / 卡片图片）
+function renderDetailPreview() {
+  const pv = state.detailPreview;
+  const textEl = $("detail-preview-text");
+  const imgWrap = $("detail-preview-image-wrap");
+  if (!pv) {
+    textEl.textContent = "点击「渲染预览」按当前发送配置生成预览";
+    textEl.classList.remove("hidden");
+    imgWrap.classList.add("hidden");
+    return;
+  }
+  const tab = state.detailPreviewTab;
+  if (tab === "image") {
+    if (pv.image_base64) {
+      $("detail-preview-image").src = `data:image/jpeg;base64,${pv.image_base64}`;
+      imgWrap.classList.remove("hidden");
+      textEl.classList.add("hidden");
+    } else {
+      textEl.textContent = pv.image_error
+        ? `卡片渲染失败: ${pv.image_error}`
+        : "勾选「渲染卡片图片」后点击「渲染预览」生成卡片图片";
+      textEl.classList.remove("hidden");
+      imgWrap.classList.add("hidden");
+    }
+  } else {
+    textEl.textContent = pv[tab] || "";
+    textEl.classList.remove("hidden");
+    imgWrap.classList.add("hidden");
+  }
+}
+
+// 调用 papers/preview 接口，按当前发送配置渲染已存论文的预览
+async function loadDetailPreview() {
+  if (!state.detailId) return;
+  const btn = $("btn-detail-preview");
+  btn.disabled = true;
+  btn.textContent = "渲染中…";
+  try {
+    state.detailPreview = await bridge.apiPost("papers/preview", {
+      arxiv_id: state.detailId,
+      send_as_image: $("detail-preview-as-image").checked,
+    });
+    renderDetailPreview();
+    // 渲染出的卡片已持久化到论文库，更新「卡片图片」tab 可用性
+    if (state.detailPreview.image_base64) {
+      state.detail = { ...(state.detail || {}), has_card: true };
+      document.querySelector('[data-dtab="card"]').style.display = "";
+    }
+  } catch (e) {
+    toast(`预览失败: ${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "渲染预览";
+  }
 }
 
 async function onLibraryClick(event) {
@@ -638,6 +715,17 @@ function bindEvents() {
       if (state.detailId) switchDetailTab(tab.dataset.dtab, state.detailId);
     });
   });
+
+  // 发送预览：子 tab 切换与渲染按钮
+  document.querySelectorAll(".pvtab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".pvtab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      state.detailPreviewTab = tab.dataset.pvtab;
+      renderDetailPreview();
+    });
+  });
+  $("btn-detail-preview").addEventListener("click", loadDetailPreview);
 
   $("send-session").addEventListener("input", updateSessionPlatform);
   $("btn-fetch").addEventListener("click", fetchPapers);

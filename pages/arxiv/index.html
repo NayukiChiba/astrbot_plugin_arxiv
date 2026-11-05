@@ -46,10 +46,33 @@
               <button class="dtab" data-dtab="summary">AI 总结</button>
               <button class="dtab" data-dtab="screenshot">首页截图</button>
               <button class="dtab" data-dtab="card">卡片图片</button>
+              <button class="dtab" data-dtab="preview">发送预览</button>
             </div>
             <pre id="detail-abstract" class="preview-text"></pre>
             <div id="detail-image-wrap" class="hidden center">
               <img id="detail-image" alt="论文图片" />
+            </div>
+
+            <!-- 发送预览：按当前发送配置重新渲染 -->
+            <div id="detail-preview-panel" class="hidden">
+              <div class="tabs small">
+                <button class="pvtab active" data-pvtab="plain">纯文本</button>
+                <button class="pvtab" data-pvtab="markdown">Markdown</button>
+                <button class="pvtab" data-pvtab="image">卡片图片</button>
+              </div>
+              <pre id="detail-preview-text" class="preview-text"></pre>
+              <div id="detail-preview-image-wrap" class="hidden center">
+                <img id="detail-preview-image" alt="卡片预览" />
+              </div>
+              <div class="panel-row preview-actions">
+                <label class="check">
+                  <input id="detail-preview-as-image" type="checkbox" />
+                  渲染卡片图片
+                </label>
+                <span class="spacer"></span>
+                <button id="btn-detail-preview" class="btn">渲染预览</button>
+              </div>
+              <div class="muted">预览按当前发送配置生成，修改配置后请重新渲染；渲染的卡片会保存为该论文的最新卡片。</div>
             </div>
 
             <div class="detail-actions">

@@ -141,6 +141,23 @@ class PaperStore:
             source_path, self.cards_dir, _asset_filename(arxiv_id, suffix)
         )
 
+    def update_card(self, arxiv_id: str, source_path: Path) -> str:
+        """保存重新渲染的卡片图片并更新论文记录，返回文件名（失败返回空串）。
+
+        用于 WebUI 按当前配置重新渲染卡片后持久化最新样式。
+        """
+        record = self._data.get(arxiv_id)
+        if not record:
+            return ""
+        card_file = self.save_card(arxiv_id, source_path)
+        if card_file:
+            old = record.get("card_file")
+            if old and old != card_file:
+                (self.cards_dir / old).unlink(missing_ok=True)
+            record["card_file"] = card_file
+            self._save()
+        return card_file
+
     @staticmethod
     def _copy_asset(source_path: Path, target_dir: Path, filename: str) -> str:
         """把资源文件复制进持久化目录，返回文件名；源不存在或失败返回空串。"""
