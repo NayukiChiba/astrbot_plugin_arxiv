@@ -217,24 +217,33 @@ async function openDetail(arxivId) {
     .map((s) => `<span>${s}</span>`)
     .join("");
 
-  $("detail-abstract").textContent = detail.abstract || "（无摘要）";
-  // 操作按钮与截图 / 卡片可用性
+  // 操作按钮与各 tab 可用性（AI 总结 / 截图 / 卡片按需显示）
   $("btn-detail-pdf").classList.toggle("hidden", !detail.pdf_file);
   $("detail-arxiv-link").href = detail.abs_url || "#";
+  document.querySelector('[data-dtab="summary"]').style.display = detail.llm_summary ? "" : "none";
   document.querySelector('[data-dtab="screenshot"]').style.display = detail.has_screenshot ? "" : "none";
   document.querySelector('[data-dtab="card"]').style.display = detail.has_card ? "" : "none";
   switchDetailTab("abstract", arxivId);
 }
 
 function switchDetailTab(tab, arxivId) {
-  const detail = state.detail;
+  const detail = state.detail || {};
   document.querySelectorAll(".dtab").forEach((t) =>
     t.classList.toggle("active", t.dataset.dtab === tab)
   );
   const textEl = $("detail-abstract");
   const imgWrap = $("detail-image-wrap");
   const img = $("detail-image");
-  if (tab === "abstract") {
+  // 文本类 tab：摘要（含中文翻译）与 AI 总结
+  if (tab === "abstract" || tab === "summary") {
+    if (tab === "abstract") {
+      const original = detail.abstract || "（无摘要）";
+      textEl.textContent = detail.abstract_zh
+        ? `【中文翻译】\n${detail.abstract_zh}\n\n【英文原文】\n${original}`
+        : original;
+    } else {
+      textEl.textContent = detail.llm_summary || "（无 AI 总结）";
+    }
     textEl.classList.remove("hidden");
     imgWrap.classList.add("hidden");
     return;
