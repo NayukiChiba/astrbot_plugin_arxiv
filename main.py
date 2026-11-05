@@ -11,7 +11,7 @@ from pathlib import Path
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import File, Image, Plain
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -65,12 +65,6 @@ def _time_to_cron(time_str: str) -> str:
         return "0 9 * * *"
 
 
-@register(
-    "astrbot_plugin_arxiv",
-    "NayukiChiba",
-    "ArXiv 论文搜索与定时推送插件",
-    "1.4.0",
-)
 class ArxivPlugin(Star):
     """ArXiv 论文推送插件主类。"""
 
