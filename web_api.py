@@ -79,7 +79,19 @@ class ArxivWebAPI:
         try:
             for inst in plugin.context.platform_manager.platform_insts:
                 meta = inst.meta()
-                platforms.append({"id": meta.id, "name": meta.name})
+                # 后端直接算好该实例的生效设置，前端无需重复合并规则
+                eff = plugin._platform_settings(meta.name, meta.id)
+                platforms.append(
+                    {
+                        "id": meta.id,
+                        "name": meta.name,
+                        "effective": {
+                            "text_format": eff.get("text_format", "plain"),
+                            "use_forward": eff.get("use_forward", False),
+                            "bot_name": eff.get("bot_name", "ArXiv Bot"),
+                        },
+                    }
+                )
         except Exception:
             logger.debug("获取平台列表失败。", exc_info=True)
 

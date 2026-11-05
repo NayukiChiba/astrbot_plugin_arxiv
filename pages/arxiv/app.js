@@ -53,20 +53,6 @@ function escapeHtml(text) {
 
 // ── 概览 ──────────────────────────────────────────────
 
-// 合并默认配置、平台类型配置与实例条目，得到某平台实例的生效设置。
-// 与后端规则一致：aiocqhttp 强制纯文本，合并转发仅 aiocqhttp 生效。
-function effectivePlatformConfig(platformName, platformId) {
-  const pcfg = state.overview?.config?.platform_config || {};
-  const key = platformName.startsWith("qqofficial") ? "qqofficial" : platformName;
-  const eff = { ...(pcfg.default || {}), ...(pcfg[key] || {}) };
-  for (const entry of pcfg.instances || []) {
-    if ((entry.session || "").split(":")[0] === platformId) Object.assign(eff, entry);
-  }
-  if (platformName === "aiocqhttp") eff.text_format = "plain";
-  else eff.use_forward = false;
-  return eff;
-}
-
 async function loadOverview() {
   const res = await bridge.apiGet("overview");
   state.overview = res;
@@ -108,7 +94,7 @@ function updateSessionPlatform() {
     $("session-platform").textContent = `平台实例: ${platformId}（未在已连接平台中找到，将按默认平台设置发送）`;
     return;
   }
-  const eff = effectivePlatformConfig(hit.name, hit.id);
+  const eff = hit.effective || {};
   const parts = [
     `平台类型: ${hit.name}`,
     `格式 ${eff.text_format || "plain"}`,
