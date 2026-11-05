@@ -27,6 +27,7 @@ from . import (
 from .arxiv_client import extractArxivId
 from .history import SentHistory
 from .paper_store import PaperStore
+from .send_options import PaperArtifacts, ProcessedPaper, SendOptions
 
 # 定时任务在 AstrBot 数据库中的唯一名称，用于去重
 _CRON_JOB_NAME = "arxiv_daily_push"
@@ -77,8 +78,6 @@ class ArxivPlugin(Star):
         self._paper_store: PaperStore | None = None
         self._cron_job_id: str = ""
         self._bestMirror: str = ""
-        # 论文产物（截图/卡片）文件名暂存，键为 arxiv_id，供 record 时读取
-        self._pending_artifacts: dict[str, dict[str, str]] = {}
 
     # ── 便捷配置访问 ──────────────────────────────────────────
 
@@ -382,34 +381,59 @@ class ArxivPlugin(Star):
             return
 
         # 处理每篇论文（按目标平台配置决定文本格式）
-        text_format = self.text_format_for_session(session)
-        chains = await self._process_papers(unsent_papers, text_format=text_format)
-
-        if not chains:
+        options = SendOptions(text_format=self.text_format_for_session(session))
+        results = await self._process_papers(unsent_papers, options)
+        if not results:
             return
 
+        chains = [chain for r in results for chain in r.chains]
         await self._deliver_chains(session, chains)
 
-        # 标记为已发送并记录到论文库（供 WebUI 浏览）
-        self._history.mark_sent_batch(
-            session,
-            [p.arxiv_id for p in unsent_papers],
-        )
-        if self._paper_store and self._paper_store_enabled:
-            for paper in unsent_papers:
-                artifacts = self._pending_artifacts.pop(paper.arxiv_id, {})
-                self._paper_store.record(
-                    paper,
-                    session,
-                    screenshot_file=artifacts.get("screenshot_file", ""),
-                    card_file=artifacts.get("card_file", ""),
-                    abstract_zh=artifacts.get("abstract_zh", ""),
-                    llm_summary=artifacts.get("llm_summary", ""),
-                )
+        # 仅对成功处理的论文标记去重并记录论文库（处理失败的不占用去重记录，
+        # 下次推送会重试）
+        self._history.mark_sent_batch(session, [r.paper.arxiv_id for r in results])
+        for r in results:
+            self._store_record(r.paper, session, r.artifacts)
         logger.info(
             "ArXiv 推送至 %s：成功发送 %d 篇论文。",
             session,
-            len(unsent_papers),
+            len(results),
+        )
+
+    def _store_record(
+        self,
+        paper: arxiv_client.ArxivPaper,
+        session: str,
+        artifacts: PaperArtifacts,
+    ) -> None:
+        """把处理产物（截图/卡片）持久化到论文库并写入元数据（开启存储时）。
+
+        Args:
+            paper: 论文元数据。
+            session: 目标会话 UMO。
+            artifacts: 处理产物（本地文件路径与 LLM 结果文本）。
+        """
+        if not (self._paper_store and self._paper_store_enabled):
+            return
+        screenshot_file = (
+            self._paper_store.save_screenshot(
+                paper.arxiv_id, Path(artifacts.screenshot_path)
+            )
+            if artifacts.screenshot_path
+            else ""
+        )
+        card_file = (
+            self._paper_store.save_card(paper.arxiv_id, Path(artifacts.card_path))
+            if artifacts.card_path
+            else ""
+        )
+        self._paper_store.record(
+            paper,
+            session,
+            screenshot_file=screenshot_file,
+            card_file=card_file,
+            abstract_zh=artifacts.abstract_zh,
+            llm_summary=artifacts.llm_summary,
         )
 
     async def _deliver_chains(self, session: str, chains: list[MessageChain]) -> None:
@@ -501,80 +525,78 @@ class ArxivPlugin(Star):
     async def _process_papers(
         self,
         papers: list[arxiv_client.ArxivPaper],
-        *,
-        text_format: str = "plain",
-        send_as_image: bool | None = None,
-        attach_pdf: bool | None = None,
-        screenshot_pdf: bool | None = None,
-        send_abstract: bool | None = None,
-        image_template: str | None = None,
-    ) -> list[MessageChain]:
-        """处理论文列表，生成消息链。
+        options: SendOptions,
+    ) -> list[ProcessedPaper]:
+        """处理论文列表，返回成功处理的论文（消息链 + 产物）。
+
+        单篇失败仅记录日志并跳过，不影响其余论文。
 
         Args:
             papers: 论文列表。
-            text_format: 文本格式（plain / markdown）。
-            send_as_image: 覆盖按图发送配置，None 时跟随配置。
-            attach_pdf: 覆盖附带 PDF 配置，None 时跟随配置。
-            screenshot_pdf: 覆盖截图 PDF 配置，None 时跟随配置。
-            send_abstract: 覆盖发送摘要配置，None 时跟随配置。
-            image_template: 覆盖卡片模板，None 时跟随配置。
+            options: 发送覆盖选项。
+
+        Returns:
+            成功处理的论文列表，每项含消息链与处理产物。
         """
         logger.info("开始处理 %d 篇论文。", len(papers))
-        chains: list[MessageChain] = []
+        results: list[ProcessedPaper] = []
 
         for i, paper in enumerate(papers, 1):
             try:
                 logger.info("处理论文 [%d/%d]: %s", i, len(papers), paper.title)
-                paper_chains = await self._process_single_paper(
-                    paper,
-                    index=i,
-                    text_format=text_format,
-                    send_as_image=send_as_image,
-                    attach_pdf=attach_pdf,
-                    screenshot_pdf=screenshot_pdf,
-                    send_abstract=send_abstract,
-                    image_template=image_template,
+                chains, artifacts = await self._process_single_paper(
+                    paper, index=i, options=options
                 )
-                chains.extend(paper_chains)
+                results.append(
+                    ProcessedPaper(paper=paper, chains=chains, artifacts=artifacts)
+                )
                 logger.info(
                     "论文 %s 处理完成，生成 %d 条消息。",
                     paper.arxiv_id,
-                    len(paper_chains),
+                    len(chains),
                 )
             except Exception:
                 logger.exception("处理论文 %s 失败，跳过。", paper.arxiv_id)
 
-        logger.info("论文处理完毕，成功生成 %d 条消息。", len(chains))
-        return chains
+        logger.info("论文处理完毕，成功 %d/%d 篇。", len(results), len(papers))
+        return results
 
     async def _process_single_paper(
         self,
         paper: arxiv_client.ArxivPaper,
         *,
         index: int = 0,
-        text_format: str = "plain",
-        send_as_image: bool | None = None,
-        attach_pdf: bool | None = None,
-        screenshot_pdf: bool | None = None,
-        send_abstract: bool | None = None,
-        image_template: str | None = None,
-    ) -> list[MessageChain]:
-        """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。"""
+        options: SendOptions,
+    ) -> tuple[list[MessageChain], PaperArtifacts]:
+        """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。
+
+        Args:
+            paper: 论文元数据。
+            index: 论文序号（0 表示无序号）。
+            options: 发送覆盖选项，值为 None 的字段跟随配置。
+
+        Returns:
+            (消息链列表, 处理产物)。产物含截图/卡片本地路径与 LLM 结果文本。
+        """
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
         abstract_text = ""
         summary_text = ""
         screenshot_path = ""
         pdf_path_str = ""
         # 覆盖参数为 None 时跟随配置，否则使用调用方覆盖值（WebUI 测试用）
+        send_as_image = options.send_as_image
         if send_as_image is None:
             send_as_image = self._platform_cfg.get("send_as_image", False)
+        attach_pdf = options.attach_pdf
         if attach_pdf is None:
             attach_pdf = self._send_cfg.get("attach_pdf", False)
+        screenshot_pdf = options.screenshot_pdf
         if screenshot_pdf is None:
             screenshot_pdf = self._send_cfg.get("screenshot_pdf", True)
+        send_abstract = options.send_abstract
         if send_abstract is None:
             send_abstract = self._send_cfg.get("send_abstract", True)
+        text_format = options.text_format
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -695,6 +717,12 @@ class ArxivPlugin(Star):
         if downloaded_pdf and attach_pdf:
             pdf_path_str = str(downloaded_pdf)
 
+        artifacts = PaperArtifacts(
+            screenshot_path=screenshot_path,
+            abstract_zh=abstract_zh,
+            llm_summary=summary_text,
+        )
+
         # 按图发送：整篇论文渲染为一张卡片图片
         if send_as_image:
             image_chains, card_path = await self._build_image_paper_chains(
@@ -705,27 +733,14 @@ class ArxivPlugin(Star):
                 screenshot_path=screenshot_path,
                 pdf_path=pdf_path_str,
                 extra_message=pdf_skip_reason,
-                image_template=image_template,
+                image_template=options.image_template,
             )
             if image_chains is not None:
-                self._record_artifacts(
-                    paper,
-                    screenshot_path,
-                    card_path,
-                    abstract_zh=abstract_zh,
-                    llm_summary=summary_text,
-                )
-                return image_chains
+                artifacts.card_path = card_path
+                return image_chains, artifacts
             logger.warning("[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id)
 
-        self._record_artifacts(
-            paper,
-            screenshot_path,
-            "",
-            abstract_zh=abstract_zh,
-            llm_summary=summary_text,
-        )
-        return formatter.build_paper_chains(
+        chains = formatter.build_paper_chains(
             paper,
             index=index,
             show_abstract=send_abstract,
@@ -737,6 +752,7 @@ class ArxivPlugin(Star):
             extra_message=pdf_skip_reason,
             markdown=text_format == "markdown",
         )
+        return chains, artifacts
 
     async def _build_image_paper_chains(
         self,
@@ -811,47 +827,6 @@ class ArxivPlugin(Star):
             chains.append(pdf_chain)
 
         return chains, str(rendered_path)
-
-    def _record_artifacts(
-        self,
-        paper: arxiv_client.ArxivPaper,
-        screenshot_path: str,
-        card_path: str,
-        *,
-        abstract_zh: str = "",
-        llm_summary: str = "",
-    ) -> None:
-        """把论文的 PDF 首页截图与按图发送卡片持久化到论文库（开启存储时）。
-
-        复制文件到论文库目录，实际写入元数据由发送方在 record() 时完成。
-        文件名与 LLM 结果（中文摘要、AI 总结）暂存到 ``_pending_artifacts``，
-        供 ``_send_papers_to_session`` 在 record 时读取。
-
-        Args:
-            paper: 论文元数据。
-            screenshot_path: PDF 首页截图本地路径，空串表示无。
-            card_path: 按图发送卡片图片本地路径，空串表示无。
-            abstract_zh: LLM 翻译的中文摘要，空串表示未翻译。
-            llm_summary: LLM 总结内容，空串表示未总结。
-        """
-        if not (self._paper_store and self._paper_store_enabled):
-            return
-        screenshot_file = (
-            self._paper_store.save_screenshot(paper.arxiv_id, Path(screenshot_path))
-            if screenshot_path
-            else ""
-        )
-        card_file = (
-            self._paper_store.save_card(paper.arxiv_id, Path(card_path))
-            if card_path
-            else ""
-        )
-        self._pending_artifacts[paper.arxiv_id] = {
-            "screenshot_file": screenshot_file,
-            "card_file": card_file,
-            "abstract_zh": abstract_zh,
-            "llm_summary": llm_summary,
-        }
 
     async def _build_info_chains(
         self,
@@ -1071,10 +1046,9 @@ class ArxivPlugin(Star):
 
         logger.info("获取论文成功: %s", paper.title)
 
-        chains = await self._process_papers(
-            [paper],
-            text_format=self._text_format_for_event(event),
-        )
+        options = SendOptions(text_format=self._text_format_for_event(event))
+        results = await self._process_papers([paper], options)
+        chains = [chain for r in results for chain in r.chains]
         if not chains:
             yield event.plain_result("📭 处理论文时出错。")
             return
