@@ -403,6 +403,8 @@ class ArxivPlugin(Star):
                     session,
                     screenshot_file=artifacts.get("screenshot_file", ""),
                     card_file=artifacts.get("card_file", ""),
+                    abstract_zh=artifacts.get("abstract_zh", ""),
+                    llm_summary=artifacts.get("llm_summary", ""),
                 )
         logger.info(
             "ArXiv 推送至 %s：成功发送 %d 篇论文。",
@@ -568,6 +570,7 @@ class ArxivPlugin(Star):
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
 
         # 摘要处理
+        abstract_zh = ""
         if self._send_cfg.get("send_abstract", True):
             abstract_mode = self._llm_cfg.get("abstract_mode", "original")
             if abstract_mode == "llm_chinese" and paper.abstract:
@@ -578,6 +581,9 @@ class ArxivPlugin(Star):
                     paper.abstract,
                     provider_id=provider_id,
                 )
+                # 翻译成功（返回值与原文不同）时记入论文库，供 WebUI 展示
+                if abstract_text != paper.abstract:
+                    abstract_zh = abstract_text
                 logger.info("[%s] 摘要翻译完成。", paper.arxiv_id)
             else:
                 abstract_text = paper.abstract
@@ -692,11 +698,23 @@ class ArxivPlugin(Star):
                 extra_message=pdf_skip_reason,
             )
             if image_chains is not None:
-                self._record_artifacts(paper, screenshot_path, card_path)
+                self._record_artifacts(
+                    paper,
+                    screenshot_path,
+                    card_path,
+                    abstract_zh=abstract_zh,
+                    llm_summary=summary_text,
+                )
                 return image_chains
             logger.warning("[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id)
 
-        self._record_artifacts(paper, screenshot_path, "")
+        self._record_artifacts(
+            paper,
+            screenshot_path,
+            "",
+            abstract_zh=abstract_zh,
+            llm_summary=summary_text,
+        )
         return formatter.build_paper_chains(
             paper,
             index=index,
@@ -783,12 +801,22 @@ class ArxivPlugin(Star):
         paper: arxiv_client.ArxivPaper,
         screenshot_path: str,
         card_path: str,
+        *,
+        abstract_zh: str = "",
+        llm_summary: str = "",
     ) -> None:
         """把论文的 PDF 首页截图与按图发送卡片持久化到论文库（开启存储时）。
 
         复制文件到论文库目录，实际写入元数据由发送方在 record() 时完成。
-        文件名暂存到 ``_pending_artifacts``，供 ``_send_papers_to_session``
-        在 record 时读取。
+        文件名与 LLM 结果（中文摘要、AI 总结）暂存到 ``_pending_artifacts``，
+        供 ``_send_papers_to_session`` 在 record 时读取。
+
+        Args:
+            paper: 论文元数据。
+            screenshot_path: PDF 首页截图本地路径，空串表示无。
+            card_path: 按图发送卡片图片本地路径，空串表示无。
+            abstract_zh: LLM 翻译的中文摘要，空串表示未翻译。
+            llm_summary: LLM 总结内容，空串表示未总结。
         """
         if not (self._paper_store and self._paper_store_enabled):
             return
@@ -805,6 +833,8 @@ class ArxivPlugin(Star):
         self._pending_artifacts[paper.arxiv_id] = {
             "screenshot_file": screenshot_file,
             "card_file": card_file,
+            "abstract_zh": abstract_zh,
+            "llm_summary": llm_summary,
         }
 
     async def _build_info_chains(

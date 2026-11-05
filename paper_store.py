@@ -79,6 +79,8 @@ class PaperStore:
         *,
         screenshot_file: str = "",
         card_file: str = "",
+        abstract_zh: str = "",
+        llm_summary: str = "",
     ) -> None:
         """记录一篇已发送的论文（重复记录时更新发送时间与会话列表）。
 
@@ -87,6 +89,8 @@ class PaperStore:
             session: 目标会话 UMO。
             screenshot_file: PDF 首页截图文件名（需已存入 screenshots_dir）。
             card_file: 按图发送卡片图片文件名（需已存入 cards_dir）。
+            abstract_zh: LLM 翻译的中文摘要，空字符串时保留已有记录。
+            llm_summary: LLM 总结内容，空字符串时保留已有记录。
         """
         pdf_file = pdf_filename_from_url(paper.pdf_url) if paper.pdf_url else ""
         existing = self._data.get(paper.arxiv_id, {})
@@ -100,6 +104,8 @@ class PaperStore:
             "abs_url": paper.abs_url,
             "pdf_url": paper.pdf_url,
             "abstract": paper.abstract,
+            "abstract_zh": abstract_zh or existing.get("abstract_zh", ""),
+            "llm_summary": llm_summary or existing.get("llm_summary", ""),
             "sent_at": time.time(),
             "sessions": sessions,
             # 仅记录确实存在于对应目录中的文件名

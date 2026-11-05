@@ -453,6 +453,8 @@ class ArxivWebAPI:
                 session,
                 screenshot_file=artifacts.get("screenshot_file", ""),
                 card_file=artifacts.get("card_file", ""),
+                abstract_zh=artifacts.get("abstract_zh", ""),
+                llm_summary=artifacts.get("llm_summary", ""),
             )
 
         logger.info("WebUI 手动发送论文 %s 至 %s。", paper.arxiv_id, session)
@@ -509,6 +511,8 @@ class ArxivWebAPI:
                 session,
                 screenshot_file=artifacts.get("screenshot_file", ""),
                 card_file=artifacts.get("card_file", ""),
+                abstract_zh=artifacts.get("abstract_zh", ""),
+                llm_summary=artifacts.get("llm_summary", ""),
             )
         logger.info("WebUI 重发论文 %s 至 %s。", arxiv_id, session)
         return json_response({"ok": True, "chains": len(chains)})
