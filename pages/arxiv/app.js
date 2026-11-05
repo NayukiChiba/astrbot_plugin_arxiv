@@ -241,6 +241,8 @@ function switchDetailTab(tab, arxivId) {
   }
   textEl.classList.add("hidden");
   imgWrap.classList.remove("hidden");
+  // 首页截图缩小展示，卡片图片保持较大尺寸
+  imgWrap.classList.toggle("shot", tab === "screenshot");
   const endpoint = tab === "screenshot" ? "papers/screenshot" : "papers/card";
   img.src = "";
   img.alt = "加载中…";

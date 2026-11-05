@@ -352,6 +352,11 @@ a.btn {
   border-radius: 8px;
 }
 
+/* 首页截图缩小展示（卡片图片保持全宽） */
+#detail-image-wrap.shot #detail-image {
+  max-width: 480px;
+}
+
 /* ── 设置面板 ─────────────────────────── */
 
 .settings-grid {
