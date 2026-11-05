@@ -27,7 +27,12 @@ from . import (
 from .arxiv_client import extractArxivId
 from .history import SentHistory
 from .paper_store import PaperStore
-from .send_options import PaperArtifacts, ProcessedPaper, SendOptions
+from .send_options import (
+    PaperArtifacts,
+    PreparedPaper,
+    ProcessedPaper,
+    SendOptions,
+)
 
 # 定时任务在 AstrBot 数据库中的唯一名称，用于去重
 _CRON_JOB_NAME = "arxiv_daily_push"
@@ -336,10 +341,17 @@ class ArxivPlugin(Star):
     # ── 定时推送逻辑 ─────────────────────────────────────────────
 
     async def _scheduled_push(self) -> None:
-        """定时推送入口：获取最新论文并发送到所有目标会话。"""
+        """定时推送入口：获取最新论文并发送到所有目标会话。
+
+        论文的平台无关产物（LLM 翻译/总结、PDF 下载、截图）只处理一次，
+        跨会话复用，避免多会话时重复调用 LLM 与重复下载 PDF；各会话仅按
+        其平台文本格式做格式化与投递。
+        """
         target_sessions: list[str] = self._push_cfg.get("target_sessions", [])
         if not target_sessions:
             logger.info("ArXiv 定时推送：未配置目标会话，跳过。")
+            return
+        if not self._history:
             return
 
         categories = self._arxiv_cfg.get("categories", ["cs.AI"])
@@ -358,16 +370,72 @@ class ArxivPlugin(Star):
             logger.exception("ArXiv 定时推送：获取论文失败。")
             return
 
-        # 对每个目标会话发送
+        # 各会话未发论文的并集（去重按会话）
+        union: dict[str, arxiv_client.ArxivPaper] = {}
         for session in target_sessions:
-            await self._send_papers_to_session(session, papers)
+            for paper in papers:
+                if not self._history.is_sent(session, paper.arxiv_id):
+                    union.setdefault(paper.arxiv_id, paper)
+        if not union:
+            logger.info("ArXiv 定时推送：所有会话均无新论文。")
+            return
+
+        # 平台无关产物仅处理一次，跨会话复用
+        base_options = SendOptions()
+        prepared_map: dict[str, PreparedPaper] = {}
+        for arxiv_id, paper in union.items():
+            try:
+                prepared_map[arxiv_id] = await self._prepare_paper(paper, base_options)
+            except Exception:
+                logger.exception("准备论文 %s 失败，跳过。", arxiv_id)
+
+        # 每个会话仅按其文本格式格式化并投递
+        for session in target_sessions:
+            unsent = [
+                p for p in papers if not self._history.is_sent(session, p.arxiv_id)
+            ]
+            if not unsent:
+                continue
+            options = SendOptions(text_format=self.text_format_for_session(session))
+            results: list[ProcessedPaper] = []
+            for i, paper in enumerate(unsent, 1):
+                prepared = prepared_map.get(paper.arxiv_id)
+                if not prepared:
+                    continue
+                try:
+                    results.append(
+                        await self._format_prepared(prepared, options, index=i)
+                    )
+                except Exception:
+                    logger.exception("格式化论文 %s 失败，跳过。", paper.arxiv_id)
+            await self._deliver_results(session, results)
+
+    async def _deliver_results(
+        self,
+        session: str,
+        results: list[ProcessedPaper],
+    ) -> None:
+        """投递处理结果，并按成功处理的论文标记去重与记录论文库。
+
+        处理失败的论文不在 results 中，因此不会占用去重记录（下次推送
+        会重试），也不会产生缺产物的库记录。
+        """
+        if not results or not self._history:
+            return
+        chains = [chain for r in results for chain in r.chains]
+        await self._deliver_chains(session, chains)
+
+        self._history.mark_sent_batch(session, [r.paper.arxiv_id for r in results])
+        for r in results:
+            self._store_record(r.paper, session, r.artifacts)
+        logger.info("ArXiv 推送至 %s：成功发送 %d 篇论文。", session, len(results))
 
     async def _send_papers_to_session(
         self,
         session: str,
         papers: list[arxiv_client.ArxivPaper],
     ) -> None:
-        """向指定会话发送论文（定时推送，自动去重）。"""
+        """向指定会话发送论文（完整处理 + 投递，自动去重）。"""
         if not self._history:
             return
 
@@ -375,7 +443,6 @@ class ArxivPlugin(Star):
         unsent_papers = [
             p for p in papers if not self._history.is_sent(session, p.arxiv_id)
         ]
-
         if not unsent_papers:
             logger.info("ArXiv 推送至 %s：无新论文。", session)
             return
@@ -383,22 +450,7 @@ class ArxivPlugin(Star):
         # 处理每篇论文（按目标平台配置决定文本格式）
         options = SendOptions(text_format=self.text_format_for_session(session))
         results = await self._process_papers(unsent_papers, options)
-        if not results:
-            return
-
-        chains = [chain for r in results for chain in r.chains]
-        await self._deliver_chains(session, chains)
-
-        # 仅对成功处理的论文标记去重并记录论文库（处理失败的不占用去重记录，
-        # 下次推送会重试）
-        self._history.mark_sent_batch(session, [r.paper.arxiv_id for r in results])
-        for r in results:
-            self._store_record(r.paper, session, r.artifacts)
-        logger.info(
-            "ArXiv 推送至 %s：成功发送 %d 篇论文。",
-            session,
-            len(results),
-        )
+        await self._deliver_results(session, results)
 
     def _store_record(
         self,
@@ -570,13 +622,32 @@ class ArxivPlugin(Star):
     ) -> tuple[list[MessageChain], PaperArtifacts]:
         """处理单篇论文：翻译摘要、下载 PDF、截图、总结、渲染输出。
 
-        Args:
-            paper: 论文元数据。
-            index: 论文序号（0 表示无序号）。
-            options: 发送覆盖选项，值为 None 的字段跟随配置。
+        等价于 ``_prepare_paper``（平台无关产物）+ ``_format_prepared``
+        （按选项格式化），供单篇处理（/arxiv get、WebUI 手动发送）使用。
 
         Returns:
             (消息链列表, 处理产物)。产物含截图/卡片本地路径与 LLM 结果文本。
+        """
+        prepared = await self._prepare_paper(paper, options)
+        processed = await self._format_prepared(prepared, options, index=index)
+        return processed.chains, processed.artifacts
+
+    async def _prepare_paper(
+        self,
+        paper: arxiv_client.ArxivPaper,
+        options: SendOptions,
+    ) -> PreparedPaper:
+        """准备论文的平台无关产物（LLM 翻译、PDF、截图、总结、摘要图片）。
+
+        这些操作（尤其 LLM 调用与 PDF 下载）成本最高且与目标平台无关，
+        多会话推送时只执行一次，各会话再用 ``_format_prepared`` 按需格式化。
+
+        Args:
+            paper: 论文元数据。
+            options: 发送覆盖选项，值为 None 的字段跟随配置。
+
+        Returns:
+            平台无关产物，供 ``_format_prepared`` 使用。
         """
         logger.info("[%s] 开始处理: %s", paper.arxiv_id, paper.title)
         abstract_text = ""
@@ -596,7 +667,6 @@ class ArxivPlugin(Star):
         send_abstract = options.send_abstract
         if send_abstract is None:
             send_abstract = self._send_cfg.get("send_abstract", True)
-        text_format = options.text_format
 
         timeout = self._arxiv_cfg.get("timeout_seconds", 30)
         max_pdf_size = self._send_cfg.get("max_pdf_size_mb", 20)
@@ -717,10 +787,50 @@ class ArxivPlugin(Star):
         if downloaded_pdf and attach_pdf:
             pdf_path_str = str(downloaded_pdf)
 
-        artifacts = PaperArtifacts(
-            screenshot_path=screenshot_path,
+        return PreparedPaper(
+            paper=paper,
+            abstract_text=abstract_text,
             abstract_zh=abstract_zh,
-            llm_summary=summary_text,
+            summary_text=summary_text,
+            screenshot_path=screenshot_path,
+            pdf_path_str=pdf_path_str,
+            abstract_image_path=abstract_image_path,
+            pdf_skip_reason=pdf_skip_reason,
+        )
+
+    async def _format_prepared(
+        self,
+        prepared: PreparedPaper,
+        options: SendOptions,
+        *,
+        index: int = 0,
+    ) -> ProcessedPaper:
+        """把平台无关产物格式化为消息链（按图或文本），返回处理结果。
+
+        仅文本格式（plain / markdown）随平台变化；按图渲染与产物复用
+        ``_prepare_paper`` 的结果。
+
+        Args:
+            prepared: ``_prepare_paper`` 的产物。
+            options: 发送覆盖选项，值为 None 的字段跟随配置。
+            index: 论文序号（0 表示无序号）。
+
+        Returns:
+            处理结果（消息链 + 产物）。
+        """
+        paper = prepared.paper
+        send_as_image = options.send_as_image
+        if send_as_image is None:
+            send_as_image = self._platform_cfg.get("send_as_image", False)
+        send_abstract = options.send_abstract
+        if send_abstract is None:
+            send_abstract = self._send_cfg.get("send_abstract", True)
+        text_format = options.text_format
+
+        artifacts = PaperArtifacts(
+            screenshot_path=prepared.screenshot_path,
+            abstract_zh=prepared.abstract_zh,
+            llm_summary=prepared.summary_text,
         )
 
         # 按图发送：整篇论文渲染为一张卡片图片
@@ -728,31 +838,31 @@ class ArxivPlugin(Star):
             image_chains, card_path = await self._build_image_paper_chains(
                 paper,
                 index=index,
-                abstract_text=abstract_text if send_abstract else "",
-                summary_text=summary_text,
-                screenshot_path=screenshot_path,
-                pdf_path=pdf_path_str,
-                extra_message=pdf_skip_reason,
+                abstract_text=prepared.abstract_text if send_abstract else "",
+                summary_text=prepared.summary_text,
+                screenshot_path=prepared.screenshot_path,
+                pdf_path=prepared.pdf_path_str,
+                extra_message=prepared.pdf_skip_reason,
                 image_template=options.image_template,
             )
             if image_chains is not None:
                 artifacts.card_path = card_path
-                return image_chains, artifacts
+                return ProcessedPaper(paper, image_chains, artifacts)
             logger.warning("[%s] 按图发送渲染失败，回退为文本模式。", paper.arxiv_id)
 
         chains = formatter.build_paper_chains(
             paper,
             index=index,
             show_abstract=send_abstract,
-            abstract_text=abstract_text,
-            summary_text=summary_text,
-            screenshot_path=screenshot_path,
-            pdf_path=pdf_path_str,
-            abstract_image_path=abstract_image_path,
-            extra_message=pdf_skip_reason,
+            abstract_text=prepared.abstract_text,
+            summary_text=prepared.summary_text,
+            screenshot_path=prepared.screenshot_path,
+            pdf_path=prepared.pdf_path_str,
+            abstract_image_path=prepared.abstract_image_path,
+            extra_message=prepared.pdf_skip_reason,
             markdown=text_format == "markdown",
         )
-        return chains, artifacts
+        return ProcessedPaper(paper, chains, artifacts)
 
     async def _build_image_paper_chains(
         self,
