@@ -46,7 +46,8 @@ body {
 
 .tab,
 .ptab,
-.dtab {
+.dtab,
+.pvtab {
   padding: 8px 20px;
   border: none;
   border-radius: 8px 8px 0 0;
@@ -58,7 +59,8 @@ body {
 
 .tab.active,
 .ptab.active,
-.dtab.active {
+.dtab.active,
+.pvtab.active {
   background: #fff;
   color: #357abd;
   font-weight: 600;
@@ -70,7 +72,8 @@ body {
 }
 
 .ptab,
-.dtab {
+.dtab,
+.pvtab {
   border-radius: 6px 6px 0 0;
   font-size: 13px;
   padding: 6px 14px;
@@ -355,6 +358,21 @@ a.btn {
 /* 首页截图缩小展示（卡片图片保持全宽） */
 #detail-image-wrap.shot #detail-image {
   max-width: 480px;
+}
+
+#detail-preview-image {
+  max-width: 100%;
+  border: 1px solid #e2e6ec;
+  border-radius: 8px;
+}
+
+#detail-preview-image-wrap {
+  margin-top: 12px;
+}
+
+.preview-actions {
+  margin-top: 12px;
+  margin-bottom: 6px;
 }
 
 /* ── 设置面板 ─────────────────────────── */

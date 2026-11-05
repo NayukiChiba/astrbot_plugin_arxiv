@@ -261,6 +261,100 @@ class ArxivWebAPI:
             return json_response({"data_url": _file_to_data_url(path, mime)})
         return file_response(path, filename=path.name, content_type=mime)
 
+    async def api_paper_preview(self):
+        """用论文库存储的数据按当前配置渲染发送预览（纯文本 / Markdown / 卡片图片）。
+
+        复用已保存的中文摘要、AI 总结与 PDF 首页截图，不重新调用 LLM；
+        渲染出的卡片会持久化到论文库，作为该论文的最新卡片样式。
+        """
+        body = await request.json(default={}) or {}
+        arxiv_id = str(body.get("arxiv_id", ""))
+        store = self.plugin._paper_store
+        if not store or not arxiv_id:
+            return error_response("缺少 arxiv_id 参数")
+        record = store.get(arxiv_id)
+        if not record:
+            return error_response("论文不存在", status_code=404)
+
+        plugin = self.plugin
+        paper = paper_from_dict(record)
+        # 摘要：当前配置为中文翻译且有已存译文时用译文，否则用原文
+        show_abstract = plugin._send_cfg.get("send_abstract", True)
+        abstract_text = ""
+        if show_abstract:
+            use_zh = plugin._llm_cfg.get(
+                "abstract_mode", "original"
+            ) == "llm_chinese" and record.get("abstract_zh")
+            abstract_text = record["abstract_zh"] if use_zh else paper.abstract
+        # AI 总结：仅在当前配置开启总结时随消息发送，预览保持一致
+        summary_text = (
+            record.get("llm_summary", "")
+            if plugin._llm_cfg.get("llm_summarize", False)
+            else ""
+        )
+
+        result: dict[str, Any] = {
+            "plain": formatter.format_paper_text(
+                paper,
+                index=1,
+                show_abstract=show_abstract,
+                abstract_text=abstract_text,
+                summary_text=summary_text,
+                markdown=False,
+            ),
+            "markdown": formatter.format_paper_text(
+                paper,
+                index=1,
+                show_abstract=show_abstract,
+                abstract_text=abstract_text,
+                summary_text=summary_text,
+                markdown=True,
+            ),
+        }
+
+        # 卡片预览：用库存截图与 LLM 结果重新渲染，并持久化为最新卡片
+        send_as_image = body.get("send_as_image")
+        if send_as_image is None:
+            send_as_image = plugin._platform_cfg.get("send_as_image", False)
+        if send_as_image:
+            screenshot_b64 = ""
+            shot = store.screenshot_path(arxiv_id)
+            if shot:
+                screenshot_b64 = base64.b64encode(shot.read_bytes()).decode("ascii")
+            template_name = str(
+                body.get("image_template")
+                or plugin._platform_cfg.get("image_template", "default")
+            )
+            try:
+                data = image_render.build_paper_template_data(
+                    paper,
+                    index=1,
+                    abstract_text=abstract_text,
+                    summary_text=summary_text,
+                    screenshot_b64=screenshot_b64,
+                )
+                template_str = image_render.load_template(
+                    plugin._data_dir / "templates",
+                    template_name,
+                )
+                rendered = await plugin.html_render(
+                    template_str,
+                    data,
+                    return_url=False,
+                    options={"full_page": True, "type": "jpeg", "quality": 90},
+                )
+                rendered_path = Path(str(rendered))
+                result["image_base64"] = base64.b64encode(
+                    rendered_path.read_bytes()
+                ).decode("ascii")
+                store.update_card(arxiv_id, rendered_path)
+                rendered_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.exception("WebUI 论文库卡片预览渲染失败。")
+                result["image_error"] = str(e)
+
+        return json_response(result)
+
     async def api_papers_delete(self):
         """批量删除论文记录及其关联文件。"""
         store = self.plugin._paper_store
@@ -548,6 +642,12 @@ def register_web_routes(plugin: ArxivPlugin) -> None:
             api.api_paper_card,
             ["GET"],
             "论文按图发送卡片图片",
+        ),
+        (
+            f"/{PLUGIN_NAME}/papers/preview",
+            api.api_paper_preview,
+            ["POST"],
+            "按当前配置预览已存论文",
         ),
         (
             f"/{PLUGIN_NAME}/papers/delete",
