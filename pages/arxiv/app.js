@@ -132,51 +132,64 @@ function updateSessionPlatform() {
 
 // ── 论文库 ────────────────────────────────────────────
 
-const libraryState = { selected: new Set() };
+const libraryState = { selected: new Set(), items: [], currentIndex: -1 };
 
 async function loadLibrary() {
   const res = await bridge.apiGet("papers", { limit: 100 });
-  const list = $("library-list");
-  const empty = $("library-empty");
   const items = res.items || [];
+  libraryState.items = items;
   libraryState.selected.clear();
   updateDeleteButton();
 
+  const empty = $("library-empty");
+  const split = $("library-split");
   if (!items.length) {
-    list.innerHTML = "";
+    $("library-list").innerHTML = "";
     empty.classList.remove("hidden");
+    split.classList.add("hidden");
+    $("library-detail").classList.add("hidden");
+    state.detailId = null;
     return;
   }
   empty.classList.add("hidden");
-  list.innerHTML = items
+  split.classList.remove("hidden");
+  renderLibraryList();
+  // 保持选中刷新前查看的论文，否则默认选中第一篇
+  const idx = items.findIndex((p) => p.arxiv_id === state.detailId);
+  await selectLibraryPaper(idx >= 0 ? idx : 0);
+}
+
+function renderLibraryList() {
+  $("library-list").innerHTML = libraryState.items
     .map((p, i) => {
       const cat = escapeHtml((p.categories || [])[0] || "");
-      const authors = escapeHtml((p.authors || []).slice(0, 3).join(", "));
+      const checked = libraryState.selected.has(p.arxiv_id) ? "checked" : "";
       return `
-      <div class="paper-card" data-index="${i}">
+      <div class="fetch-item ${i === libraryState.currentIndex ? "selected" : ""}" data-index="${i}">
         <div class="check-cell">
-          <input type="checkbox" class="select-box" data-id="${escapeHtml(p.arxiv_id)}" />
+          <input type="checkbox" class="select-box" data-id="${escapeHtml(p.arxiv_id)}" ${checked} />
           <div class="title">${escapeHtml(p.title)}</div>
         </div>
         <div class="meta">
           <span class="cat">${cat}</span>
           <span>${escapeHtml(p.arxiv_id)}</span>
         </div>
-        <div class="meta">
-          <span>${authors}</span>
-        </div>
-        <div class="meta">
-          <span>发送于 ${fmtTime(p.sent_at)}</span>
-          <span>${(p.sessions || []).length} 个会话</span>
-        </div>
-        <div class="actions">
-          <button class="btn" data-action="detail" data-id="${escapeHtml(p.arxiv_id)}">详情</button>
-          ${p.pdf_file ? `<button class="btn" data-action="pdf" data-id="${escapeHtml(p.arxiv_id)}" data-name="${escapeHtml(p.pdf_file)}">下载 PDF</button>` : ""}
-          <a class="btn" href="${escapeHtml(p.abs_url)}" target="_blank" rel="noopener">arXiv 页面</a>
-        </div>
+        <div class="meta">发送于 ${fmtTime(p.sent_at)} · ${(p.sessions || []).length} 个会话</div>
       </div>`;
     })
     .join("");
+}
+
+async function selectLibraryPaper(index) {
+  const paper = libraryState.items[index];
+  if (!paper) return;
+  libraryState.currentIndex = index;
+  renderLibraryList();
+  try {
+    await openDetail(paper.arxiv_id);
+  } catch (e) {
+    toast(`加载详情失败: ${e.message || e}`);
+  }
 }
 
 function updateDeleteButton() {
@@ -186,11 +199,12 @@ function updateDeleteButton() {
   btn.textContent = n > 0 ? `删除选中（${n}）` : "删除选中";
 }
 
-// 详情弹窗：展示完整信息、摘要、首页截图、卡片图片
+// 详情面板：展示完整信息、摘要、首页截图、卡片图片与重发入口
 async function openDetail(arxivId) {
   const detail = await bridge.apiGet("papers/detail", { arxiv_id: arxivId });
   state.detailId = arxivId;
   state.detail = detail;
+  $("library-detail").classList.remove("hidden");
   $("detail-title").textContent = detail.title || arxivId;
   $("detail-meta").innerHTML = [
     escapeHtml(detail.arxiv_id || ""),
@@ -204,11 +218,12 @@ async function openDetail(arxivId) {
     .join("");
 
   $("detail-abstract").textContent = detail.abstract || "（无摘要）";
-  // 截图 / 卡片可用性
+  // 操作按钮与截图 / 卡片可用性
+  $("btn-detail-pdf").classList.toggle("hidden", !detail.pdf_file);
+  $("detail-arxiv-link").href = detail.abs_url || "#";
   document.querySelector('[data-dtab="screenshot"]').style.display = detail.has_screenshot ? "" : "none";
   document.querySelector('[data-dtab="card"]').style.display = detail.has_card ? "" : "none";
   switchDetailTab("abstract", arxivId);
-  $("detail-modal").classList.remove("hidden");
 }
 
 function switchDetailTab(tab, arxivId) {
@@ -254,24 +269,8 @@ async function onLibraryClick(event) {
     return;
   }
 
-  const btn = event.target.closest("button[data-action]");
-  if (!btn) return;
-  const action = btn.dataset.action;
-  const arxivId = btn.dataset.id;
-
-  if (action === "pdf") {
-    await bridge.download("papers/pdf", { arxiv_id: arxivId }, btn.dataset.name);
-    return;
-  }
-
-  if (action === "detail") {
-    try {
-      await openDetail(arxivId);
-    } catch (e) {
-      toast(`加载详情失败: ${e.message || e}`);
-    }
-    return;
-  }
+  const item = event.target.closest(".fetch-item");
+  if (item) await selectLibraryPaper(Number(item.dataset.index));
 }
 
 async function deleteSelected() {
@@ -565,7 +564,7 @@ async function resendDetail() {
       send_as_image: $("detail-as-image").checked,
     });
     toast(`重发成功，共 ${res.chains} 条消息`);
-    $("detail-modal").classList.add("hidden");
+    await loadOverview();
     await loadLibrary();
   } catch (e) {
     toast(`重发失败: ${e.message || e}`);
@@ -616,15 +615,17 @@ function bindEvents() {
 
   $("library-list").addEventListener("click", onLibraryClick);
   $("btn-delete-selected").addEventListener("click", deleteSelected);
+  $("btn-detail-pdf").addEventListener("click", async () => {
+    if (state.detail?.pdf_file) {
+      await bridge.download("papers/pdf", { arxiv_id: state.detailId }, state.detail.pdf_file);
+    }
+  });
 
-  // 详情弹窗：tab 切换与关闭
+  // 详情面板：tab 切换
   document.querySelectorAll(".dtab").forEach((tab) => {
     tab.addEventListener("click", () => {
       if (state.detailId) switchDetailTab(tab.dataset.dtab, state.detailId);
     });
-  });
-  document.querySelectorAll('[data-close="detail"]').forEach((el) => {
-    el.addEventListener("click", () => $("detail-modal").classList.add("hidden"));
   });
 
   $("send-session").addEventListener("input", updateSessionPlatform);

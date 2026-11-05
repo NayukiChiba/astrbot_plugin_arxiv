@@ -10,6 +10,8 @@
     <header class="topbar">
       <h1>📚 ArXiv 控制台</h1>
       <div id="status-badges" class="badges"></div>
+      <span class="spacer"></span>
+      <button id="btn-trigger" class="btn warn" title="立即执行一次定时推送">触发推送</button>
     </header>
 
     <nav class="tabs">
@@ -18,7 +20,7 @@
       <button class="tab" data-tab="settings">设置</button>
     </nav>
 
-    <!-- ── 论文库 ─────────────────────────────── -->
+    <!-- ── 论文库（左右分栏） ─────────────────── -->
     <section id="tab-library" class="tab-page">
       <div class="panel">
         <div class="panel-row">
@@ -28,50 +30,50 @@
           <button id="btn-cleanup" class="btn">立即清理</button>
           <button id="btn-reload-library" class="btn">刷新</button>
         </div>
-        <div id="library-list" class="paper-grid"></div>
         <div id="library-empty" class="empty hidden">
           暂无论文记录。论文通过定时推送或「获取与发送」手动发送后会出现在这里。
         </div>
-      </div>
-    </section>
+        <div id="library-split" class="split hidden">
+          <!-- 左栏：论文列表 -->
+          <div id="library-list" class="fetch-list"></div>
 
-    <!-- ── 论文详情弹窗 ────────────────────────── -->
-    <div id="detail-modal" class="modal hidden">
-      <div class="modal-mask" data-close="detail"></div>
-      <div class="modal-body">
-        <div class="modal-head">
-          <span id="detail-title" class="modal-title"></span>
-          <button class="btn" data-close="detail">关闭</button>
-        </div>
-        <div class="modal-content">
-          <div id="detail-meta" class="detail-meta"></div>
-          <div class="tabs small">
-            <button class="dtab active" data-dtab="abstract">摘要</button>
-            <button class="dtab" data-dtab="screenshot">首页截图</button>
-            <button class="dtab" data-dtab="card">卡片图片</button>
-          </div>
-          <pre id="detail-abstract" class="preview-text"></pre>
-          <div id="detail-image-wrap" class="hidden center">
-            <img id="detail-image" alt="论文图片" />
-          </div>
-          <!-- 重发面板 -->
-          <div class="send-form">
-            <label>
-              重发到会话
-              <input id="detail-session" class="input" list="session-list" placeholder="aiocqhttp:GroupMessage:123456" />
-            </label>
-            <div class="panel-row">
-              <label class="check">
-                <input id="detail-as-image" type="checkbox" />
-                按图发送
+          <!-- 右栏：论文详情 + 重发面板 -->
+          <div id="library-detail" class="preview hidden">
+            <div id="detail-title" class="preview-title"></div>
+            <div id="detail-meta" class="detail-meta"></div>
+            <div class="tabs small">
+              <button class="dtab active" data-dtab="abstract">摘要</button>
+              <button class="dtab" data-dtab="screenshot">首页截图</button>
+              <button class="dtab" data-dtab="card">卡片图片</button>
+            </div>
+            <pre id="detail-abstract" class="preview-text"></pre>
+            <div id="detail-image-wrap" class="hidden center">
+              <img id="detail-image" alt="论文图片" />
+            </div>
+
+            <div class="detail-actions">
+              <button id="btn-detail-pdf" class="btn hidden">下载 PDF</button>
+              <a id="detail-arxiv-link" class="btn" href="#" target="_blank" rel="noopener">arXiv 页面</a>
+            </div>
+
+            <div class="send-form">
+              <label>
+                重发到会话
+                <input id="detail-session" class="input" list="session-list" placeholder="aiocqhttp:GroupMessage:123456" />
               </label>
-              <span class="spacer"></span>
-              <button id="btn-resend" class="btn primary">重发此论文</button>
+              <div class="panel-row">
+                <label class="check">
+                  <input id="detail-as-image" type="checkbox" />
+                  按图发送
+                </label>
+                <span class="spacer"></span>
+                <button id="btn-resend" class="btn primary">重发此论文</button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- ── 获取与发送（左右分栏） ────────────────── -->
     <section id="tab-fetcher" class="tab-page hidden">
@@ -89,7 +91,6 @@
           />
           <input id="fetch-count" class="input num" type="number" min="1" max="20" value="3" title="数量" />
           <button id="btn-fetch" class="btn primary">获取论文</button>
-          <button id="btn-trigger" class="btn warn" title="立即执行一次定时推送">触发推送</button>
         </div>
 
         <div class="split">
